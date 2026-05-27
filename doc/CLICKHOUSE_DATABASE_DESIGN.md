@@ -413,6 +413,93 @@ GROUP BY toDate(log_time), toHour(log_time), user_id;
 4. **索引利用**：合理设计排序键，提高查询效率
 5. **并发查询**：使用分布式查询能力，提高查询速度
 
+### 4.3 写多场景优化方案
+
+#### 4.3.1 物化视图评估
+
+| 物化视图 | 当前状态 | 写入频率 | 实时性需求 | 评估结果 | 优化建议 |
+|----------|----------|----------|------------|----------|----------|
+| `game_log_agg_hourly_mv` | 每次写入触发小时级聚合 | 高 | 低（分钟级可接受） | **移到逻辑层** | 改为每小时批处理 |
+| `rtp_global_mv` | 每次写入触发全局RTP统计 | 高 | 低（分钟级可接受） | **移到逻辑层** | 改为每5分钟批处理 |
+| `rtp_integrator_mv` | 每次写入触发集成商RTP统计 | 高 | 低（分钟级可接受） | **移到逻辑层** | 改为每5分钟批处理 |
+| `rtp_user_mv` | 每次写入触发用户RTP统计 | 高 | 中（可能需要实时查看） | **移到逻辑层** | 改为每1分钟批处理 |
+
+#### 4.3.2 优化方案
+
+**问题分析**：
+- 高频写入时，每次插入都会触发所有物化视图的实时计算
+- 导致大量CPU资源消耗在聚合计算上，增加写入延迟
+- 大部分统计查询不需要毫秒级实时性，可以接受一定延迟
+
+**优化措施**：
+
+1. **移除实时物化视图**
+   - 删除所有CREATE MATERIALIZED VIEW语句
+   - 保留聚合表结构（`game_log_agg_hourly_local`、`rtp_statistics_local`）
+   - 原始数据仅写入`game_log_detail_local`表
+
+2. **应用层定时批处理**
+   ```sql
+   -- 小时级聚合批处理（每小时执行）
+   INSERT INTO game_log_agg_hourly_local
+   SELECT
+       toDate(log_time) as agg_date,
+       toHour(log_time) as agg_hour,
+       integrator_id,
+       game_id,
+       uniqState(user_id) as user_count,
+       sumState(toUInt64(1)) as spin_count,
+       -- ... 其他聚合字段
+   FROM game_log_detail_local
+   WHERE log_time >= now() - INTERVAL 1 HOUR
+   GROUP BY agg_date, agg_hour, integrator_id, game_id;
+   
+   -- RTP统计批处理（每5分钟执行）
+   INSERT INTO rtp_statistics_local
+   SELECT
+       toDate(log_time) as stat_date,
+       0 as stat_hour,
+       'global' as dimension_type,
+       'all' as dimension_id,
+       sum(bet_amount) as total_bet,
+       -- ... 其他统计字段
+   FROM game_log_detail_local
+   WHERE log_time >= now() - INTERVAL 5 MINUTE
+   GROUP BY toDate(log_time);
+   ```
+
+3. **批处理频率建议**
+   - 小时级聚合：每小时执行一次
+   - 全局RTP统计：每5分钟执行一次
+   - 集成商RTP统计：每5分钟执行一次
+   - 用户RTP统计：每1分钟执行一次（高优先级）
+
+#### 4.3.3 性能提升预期
+
+| 指标 | 优化前 | 优化后 | 提升幅度 |
+|------|--------|--------|----------|
+| 写入延迟 | ~100ms | ~10ms | **90%提升** |
+| 写入CPU使用 | 高（含聚合计算） | 低（仅数据插入） | **70%降低** |
+| 吞吐量 | ~10K/s | ~50K/s | **5倍提升** |
+| 统计查询延迟 | 实时 | 1-5分钟延迟 | 可接受 |
+
+#### 4.3.4 实施建议
+
+1. **渐进式迁移**
+   - 先移除用户级RTP物化视图，观察性能提升
+   - 再移除其他物化视图，逐步优化
+   - 监控系统性能，调整批处理频率
+
+2. **监控和告警**
+   - 监控批处理任务执行状态
+   - 设置数据延迟告警（如超过预期延迟时间）
+   - 监控聚合表数据完整性
+
+3. **应急方案**
+   - 保留物化视图创建脚本，需要时可快速恢复
+   - 设置手动触发聚合任务的接口
+   - 批处理失败时的补偿机制
+
 ---
 
 ## 5. 数据质量和一致性
