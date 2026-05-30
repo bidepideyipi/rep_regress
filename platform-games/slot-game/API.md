@@ -57,8 +57,7 @@
   "user_id": "string",       // 必填，用户ID
   "bet_amount": "number",    // 必填，下注金额，最小0.1
   "bet_lines": "integer",    // 必填，下注线数，1-20
-  "session_id": "string",    // 必填，会话ID
-  "is_free_spin": "boolean"  // 可选，是否免费旋转，默认false
+  "session_id": "string"     // 必填，会话ID
 }
 ```
 
@@ -94,7 +93,6 @@
       }
     ],
     "bonus_feature": "free_spins_10",
-    "rtp_rate": 1000.0,
     "processing_time_ms": 5,
     "timestamp": "2024-01-01T10:00:00Z"
   }
@@ -206,8 +204,7 @@ curl -X POST http://localhost:8081/api/game/spin \
     "user_id": "user_001",
     "bet_amount": 1.0,
     "bet_lines": 5,
-    "session_id": "session_123",
-    "is_free_spin": false
+    "session_id": "session_123"
   }'
 
 # 获取配置

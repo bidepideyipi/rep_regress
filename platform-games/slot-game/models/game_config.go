@@ -89,7 +89,6 @@ type SpinRequest struct {
 	BetAmount   float64 `json:"bet_amount" binding:"required,min=0.1"`
 	BetLines    int     `json:"bet_lines" binding:"required,min=1,max=20"`
 	SessionID   string  `json:"session_id" binding:"required"`
-	IsFreeSpin  bool    `json:"is_free_spin"`
 }
 
 // SpinResponse 旋转响应
@@ -106,7 +105,6 @@ type SpinResponse struct {
 	ReelResult    [][]string          `json:"reel_result"`
 	WinLines      []WinLine           `json:"win_lines"`
 	BonusFeature  string              `json:"bonus_feature"`
-	RTPRate       float64             `json:"rtp_rate"`
 	ProcessingTimeMs int64            `json:"processing_time_ms"`
 	Timestamp     time.Time           `json:"timestamp"`
 }

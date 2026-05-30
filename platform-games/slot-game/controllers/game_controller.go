@@ -3,6 +3,7 @@ package controllers
 import (
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -35,7 +36,6 @@ type SpinRequest struct {
 	BetAmount float64 `json:"bet_amount" binding:"required,min=0.1"`
 	BetLines  int     `json:"bet_lines" binding:"required,min=1,max=20"`
 	SessionID string  `json:"session_id" binding:"required"`
-	IsFreeSpin bool   `json:"is_free_spin"`
 }
 
 // SpinResponse 旋转响应
@@ -55,7 +55,6 @@ type SpinResponse struct {
 		ReelResult       [][]string          `json:"reel_result"`
 		WinLines         []models.WinLine    `json:"win_lines"`
 		BonusFeature     string              `json:"bonus_feature"`
-		RTPRate          float64             `json:"rtp_rate"`
 		ProcessingTimeMs int64               `json:"processing_time_ms"`
 		Timestamp        time.Time           `json:"timestamp"`
 	} `json:"data,omitempty"`
@@ -100,7 +99,6 @@ func (gc *GameController) Spin(c *gin.Context) {
 		BetAmount: req.BetAmount,
 		BetLines:  req.BetLines,
 		SessionID: req.SessionID,
-		IsFreeSpin: req.IsFreeSpin,
 	}
 	
 	// 执行旋转
@@ -113,13 +111,13 @@ func (gc *GameController) Spin(c *gin.Context) {
 		return
 	}
 	
-	// 计算RTP
-	rtpRate := gc.gameInstance.CalculateRTP(gameReq.BetAmount, result.TotalWin)
-	
 	// 计算处理时间
 	processingTime := time.Since(startTime).Milliseconds()
 	
 	// 构建响应
+	// 判断是否为免费旋转：基于 BonusFeature 是否以 free_spins 开头
+	isFreeSpin := strings.HasPrefix(result.BonusFeature, "free_spins")
+
 	response := SpinResponse{
 		Success: true,
 		Data: struct {
@@ -135,7 +133,6 @@ func (gc *GameController) Spin(c *gin.Context) {
 			ReelResult       [][]string       `json:"reel_result"`
 			WinLines         []models.WinLine `json:"win_lines"`
 			BonusFeature     string           `json:"bonus_feature"`
-			RTPRate          float64          `json:"rtp_rate"`
 			ProcessingTimeMs int64            `json:"processing_time_ms"`
 			Timestamp        time.Time        `json:"timestamp"`
 		}{
@@ -147,11 +144,10 @@ func (gc *GameController) Spin(c *gin.Context) {
 			BetPerLine:       gameReq.BetAmount / float64(gameReq.BetLines),
 			WinAmount:        result.TotalWin,
 			NetResult:        result.TotalWin - gameReq.BetAmount,
-			IsFreeSpin:       gameReq.IsFreeSpin,
+			IsFreeSpin:       isFreeSpin,
 			ReelResult:       result.ReelResult,
 			WinLines:         result.WinLines,
 			BonusFeature:     result.BonusFeature,
-			RTPRate:          rtpRate,
 			ProcessingTimeMs: processingTime,
 			Timestamp:        time.Now(),
 		},
