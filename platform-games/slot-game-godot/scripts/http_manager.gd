@@ -5,6 +5,7 @@ class_name HttpManager
 static var _instance: HttpManager = null
 var base_url: String = "http://127.0.0.1:8081"
 var http_request: HTTPRequest
+var game_id: String = "game_001"
 
 signal spin_completed(response: SpinResponse)
 signal config_completed(data: Dictionary)
@@ -29,6 +30,9 @@ func set_base_url(url: String) -> void:
 func get_base_url() -> String:
 	return base_url
 
+func set_game_id(id: String) -> void:
+	game_id = id
+
 var _current_request_type: String = ""
 var _request_data: Dictionary = {}
 
@@ -49,7 +53,7 @@ func get_game_config() -> void:
 	if http_request == null:
 		_ready()
 
-	var url = base_url + "/api/game/config"
+	var url = base_url + "/api/game/config/" + game_id
 	var headers = ["Content-Type: application/json"]
 
 	_current_request_type = "config"

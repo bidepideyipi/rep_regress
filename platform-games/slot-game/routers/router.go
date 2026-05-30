@@ -22,7 +22,7 @@ func SetupRouter(gameController *controllers.GameController) *gin.Engine {
 		game := api.Group("/game")
 		{
 			game.POST("/spin", gameController.Spin)           // 执行旋转
-			game.GET("/config", gameController.GetConfig)      // 获取游戏配置
+			game.GET("/config/:game_id", gameController.GetConfig)      // 获取游戏配置
 			game.POST("/config/refresh", gameController.RefreshConfig) // 刷新配置
 		}
 	}

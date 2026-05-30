@@ -55,13 +55,13 @@ func create_emoji_symbol(symbol_type: String, size: int) -> Control:
 		"cherry": "🍒",
 		"lemon": "🍋",
 		"orange": "🍊",
-		"plum": "🍇",
 		"grape": "🍇",
+		"plum": "🍑",
 		"watermelon": "🍉",
 		"bell": "🔔",
-		"seven": "777",
+		"seven": "7",
 		"wild": "Wild",
-		"scatter": "$$$"
+		"scatter": "Scat"
 	}
 
 	symbol_label.text = emoji_map.get(symbol_type, "?")

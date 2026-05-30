@@ -53,9 +53,6 @@ func get_win_lines() -> Array:
 func get_bonus_feature() -> String:
 	return data.get("bonus_feature", "")
 
-func get_rtp_rate() -> float:
-	return data.get("rtp_rate", 0.0)
-
 func get_processing_time_ms() -> float:
 	return data.get("processing_time_ms", 0.0)
 

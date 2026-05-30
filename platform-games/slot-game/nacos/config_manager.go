@@ -184,17 +184,38 @@ func (cm *ConfigManager) GetConfigInfo() map[string]interface{} {
 		return nil
 	}
 
+	// 构建符号赔率表
+	symbolPaytable := make([]map[string]interface{}, 0)
+	for _, symbol := range cm.config.Symbols {
+		multipliers := make([]map[string]interface{}, 0)
+		for _, m := range symbol.Multipliers {
+			multipliers = append(multipliers, map[string]interface{}{
+				"match_count": m.MatchCount,
+				"multiplier":  m.Multiplier,
+				"is_bet_line": m.IsBetLine,
+			})
+		}
+
+		symbolPaytable = append(symbolPaytable, map[string]interface{}{
+			"symbol_id":     symbol.SymbolID,
+			"symbol_name":   symbol.SymbolName,
+			"symbol_type":   symbol.SymbolType,
+			"is_active":     symbol.IsActive,
+			"multipliers":   multipliers,
+		})
+	}
+
 	return map[string]interface{}{
-		"game_id":      cm.config.Config.GameID,
-		"game_name":    cm.config.Config.GameName,
-		"version":      cm.config.Config.Version,
-		"description":  cm.config.Config.Description,
-		"last_updated": cm.config.Config.LastUpdated,
+		"game_id":       cm.config.Config.GameID,
+		"game_name":     cm.config.Config.GameName,
+		"version":       cm.config.Config.Version,
+		"description":   cm.config.Config.Description,
+		"last_updated":  cm.config.Config.LastUpdated,
 		"symbols_count": len(cm.config.Symbols),
 		"reels_count":   len(cm.config.Reels),
 		"pay_lines":     cm.config.PayTable.PayLineCount,
 		"min_bet":       cm.config.GameSettings.MinBet,
 		"max_bet":       cm.config.GameSettings.MaxBet,
-		"rtp":           cm.config.GameSettings.RTP,
+		"symbol_paytable": symbolPaytable,
 	}
 }

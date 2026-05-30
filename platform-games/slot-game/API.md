@@ -110,9 +110,11 @@
 
 #### 2.2 获取游戏配置
 
-- **接口**: `GET /api/game/config`
-- **描述**: 获取当前游戏配置信息
+- **接口**: `GET /api/game/config/:game_id`
+- **描述**: 获取指定游戏配置信息
 - **认证**: 需要认证（建议添加JWT）
+- **路径参数**:
+  - `game_id`: 游戏ID
 
 **响应示例**:
 
@@ -130,7 +132,28 @@
     "pay_lines": 20,
     "min_bet": 0.1,
     "max_bet": 1000.0,
-    "rtp": 96.5
+    "symbol_paytable": [
+      {
+        "symbol_id": "cherry",
+        "symbol_name": "樱桃",
+        "symbol_type": "normal",
+        "is_active": true,
+        "multipliers": [
+          {"match_count": 2, "multiplier": 2.0, "is_bet_line": true},
+          {"match_count": 3, "multiplier": 5.0, "is_bet_line": true}
+        ]
+      },
+      {
+        "symbol_id": "wild",
+        "symbol_name": "万能",
+        "symbol_type": "wild",
+        "is_active": true,
+        "multipliers": [
+          {"match_count": 2, "multiplier": 10.0, "is_bet_line": true},
+          {"match_count": 3, "multiplier": 50.0, "is_bet_line": true}
+        ]
+      }
+    ]
   }
 }
 ```
@@ -208,7 +231,7 @@ curl -X POST http://localhost:8081/api/game/spin \
   }'
 
 # 获取配置
-curl http://localhost:8081/api/game/config
+curl http://localhost:8081/api/game/config/game_001
 ```
 
 ## 注意事项

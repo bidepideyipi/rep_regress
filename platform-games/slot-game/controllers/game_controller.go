@@ -158,6 +158,16 @@ func (gc *GameController) Spin(c *gin.Context) {
 
 // GetConfig 获取游戏配置信息
 func (gc *GameController) GetConfig(c *gin.Context) {
+	// 获取路径参数中的 game_id
+	gameID := c.Param("game_id")
+	if gameID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "缺少游戏ID参数",
+		})
+		return
+	}
+
 	config := gc.configManager.GetConfig()
 	if config == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -166,7 +176,16 @@ func (gc *GameController) GetConfig(c *gin.Context) {
 		})
 		return
 	}
-	
+
+	// 验证请求的游戏ID与当前配置是否匹配
+	if config.Config.GameID != gameID {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"message": "游戏配置不存在",
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    gc.configManager.GetConfigInfo(),

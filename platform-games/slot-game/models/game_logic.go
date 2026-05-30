@@ -106,7 +106,7 @@ func (game *SlotGameGame) checkSingleLine(reelResult [][]string, pattern [][2]in
 		return nil
 	}
 
-	// 处理万能符号
+	// 处理万能符号，选择最高赔付的匹配
 	matchingSymbol, matchCount, isWild := game.processWildSymbols(symbols)
 	if matchingSymbol == "" {
 		return nil
@@ -134,51 +134,75 @@ func (game *SlotGameGame) checkSingleLine(reelResult [][]string, pattern [][2]in
 	}
 }
 
-// processWildSymbols 处理万能符号
+// processWildSymbols 处理万能符号，返回能产生最高赔付的符号和匹配数
 func (game *SlotGameGame) processWildSymbols(symbols []string) (string, int, bool) {
 	if len(symbols) == 0 {
 		return "", 0, false
 	}
 
-	// 统计符号类型（处理wild）
+	// 统计非wild符号的数量
 	symbolCounts := make(map[string]int)
-	hasWild := false
 	wildCount := 0
 
 	for _, symbol := range symbols {
 		if game.config.IsWildSymbol(symbol) {
-			hasWild = true
 			wildCount++
-			// Wild可以替代普通符号
-			for _, s := range symbols {
-				if !game.config.IsWildSymbol(s) {
-					symbolCounts[s]++
-				}
-			}
 		} else {
 			symbolCounts[symbol]++
 		}
 	}
 
-	// 如果没有Wild，直接检查是否有匹配
-	if !hasWild {
-		for symbol, count := range symbolCounts {
-			if count >= 2 {
-				return symbol, count, false
+	// 如果没有Wild，检查是否所有符号相同
+	if wildCount == 0 {
+		// 所有符号必须相同才算匹配
+		firstSymbol := symbols[0]
+		allSame := true
+		for _, s := range symbols {
+			if s != firstSymbol {
+				allSame = false
+				break
 			}
+		}
+		if allSame {
+			return firstSymbol, len(symbols), false
 		}
 		return "", 0, false
 	}
 
-	// 有Wild的情况
+	// 有Wild的情况：选择赔付最高的符号
 	var bestMatch string
 	var bestCount int
+	var bestMultiplier float64
 
 	for symbol, count := range symbolCounts {
-		if count+wildCount > bestCount && count+wildCount >= 2 {
-			bestMatch = symbol
-			bestCount = count + wildCount
+		totalMatch := count + wildCount
+		if totalMatch < 2 {
+			continue
 		}
+
+		// 获取该符号在这个匹配数的赔付倍数
+		sym := game.config.GetSymbolBy(symbol)
+		if sym == nil {
+			continue
+		}
+
+		multiplier := sym.GetSymbolMultiplier(totalMatch)
+		if multiplier == nil {
+			continue
+		}
+
+		// 选择赔付倍数最高的
+		if multiplier.Multiplier > bestMultiplier {
+			bestMatch = symbol
+			bestCount = totalMatch
+			bestMultiplier = multiplier.Multiplier
+		}
+	}
+
+	// 如果没有找到合适的匹配，尝试只有wild的情况
+	if bestMatch == "" && wildCount >= 2 {
+		// 纯wild的情况，选择wild自己的赔付
+		return "wild", wildCount, true
 	}
 
 	if bestMatch == "" {

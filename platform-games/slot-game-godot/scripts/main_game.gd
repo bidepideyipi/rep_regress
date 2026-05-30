@@ -16,8 +16,9 @@ const PAYLINES = [
 
 var http_manager: HttpManager
 var symbol_renderer: SymbolRenderer
+var game_config: GameConfig
 
-var current_bet: float = 1.0
+var current_bet: float = 5.0
 var bet_lines: int = 5
 var balance: float = INITIAL_BALANCE
 var total_win: float = 0.0
@@ -34,11 +35,19 @@ var title_label: Label
 var balance_label: Label
 var bet_label: Label
 var win_label: Label
+var lines_label: Label
+var bet_per_line_label: Label
 var status_label: Label
 var spin_button: Button
+var auto_button: Button
+var help_button: Button
+var exit_button: Button
 var minus_button: Button
 var plus_button: Button
 var reels_container: Control
+
+var auto_spins_remaining: int = 0
+var is_auto_spinning: bool = false
 
 var pending_response: SpinResponse = null
 var current_win_lines: Array = []
@@ -85,6 +94,16 @@ func _find_nodes() -> void:
 		balance_label = topbar.get_node_or_null("BalanceLabel")
 		bet_label = topbar.get_node_or_null("BetLabel")
 		win_label = topbar.get_node_or_null("WinLabel")
+		# 创建 Lines 和 BetPerLine 标签
+		lines_label = Label.new()
+		lines_label.text = "Lines: %d" % bet_lines
+		lines_label.add_theme_font_size_override("font_size", 16)
+		topbar.add_child(lines_label)
+
+		bet_per_line_label = Label.new()
+		bet_per_line_label.text = "Bet/Line: %.2f" % (current_bet / float(bet_lines))
+		bet_per_line_label.add_theme_font_size_override("font_size", 16)
+		topbar.add_child(bet_per_line_label)
 
 	status_label = vbox.get_node_or_null("StatusLabel")
 
@@ -93,8 +112,16 @@ func _find_nodes() -> void:
 		spin_button = control_panel.get_node_or_null("SpinButton")
 		minus_button = control_panel.get_node_or_null("MinusButton")
 		plus_button = control_panel.get_node_or_null("PlusButton")
+		auto_button = Button.new()
+		auto_button.text = "Auto 50"
+		auto_button.custom_minimum_size = Vector2(100, 60)
+		auto_button.add_theme_font_size_override("font_size", 16)
+		control_panel.add_child(auto_button)
 
 	reels_container = vbox.get_node_or_null("ReelsContainer")
+
+	# 创建右上角按钮容器
+	_create_top_right_buttons()
 
 func _connect_signals() -> void:
 	print("=== Connecting signals ===")
@@ -109,6 +136,12 @@ func _connect_signals() -> void:
 		minus_button.pressed.connect(_on_minus_pressed)
 	if plus_button:
 		plus_button.pressed.connect(_on_plus_pressed)
+	if help_button:
+		help_button.pressed.connect(_on_help_pressed)
+	if exit_button:
+		exit_button.pressed.connect(_on_exit_pressed)
+		if auto_button:
+			auto_button.pressed.connect(_on_auto_pressed)
 
 func _setup_slot_machine() -> void:
 	if reels_container == null:
@@ -296,7 +329,6 @@ func _perform_spin() -> void:
 	request.bet_amount = current_bet
 	request.bet_lines = bet_lines
 	request.session_id = session_id
-	request.is_free_spin = false
 
 	#print("=== Spin Request ===")
 	#print("JSON: ", JSON.stringify(request.to_dict()))
@@ -328,6 +360,13 @@ func _on_spin_completed(response: SpinResponse) -> void:
 func _on_config_completed(data: Dictionary) -> void:
 	print("=== Game Config Response ===")
 	print("JSON: ", JSON.stringify(data))
+
+	if data.get("success", false):
+		game_config = GameConfig.new()
+		game_config._from_json(data)
+		print("Game loaded: ", game_config.game_name)
+	else:
+		print("Failed to load game config: ", data.get("message", "Unknown error"))
 
 func _transpose_reel_result(row_data: Array) -> Array:
 	var transposed = []
@@ -440,6 +479,16 @@ func _finalize_spin_result(response: SpinResponse) -> void:
 
 	print("Done, Balance: ", balance)
 
+	# 自动挂机继续逻辑
+	if is_auto_spinning:
+		auto_spins_remaining -= 1
+		if status_label:
+			status_label.text = "Auto: %d" % auto_spins_remaining
+		if auto_spins_remaining > 0:
+			_continue_auto_spin()
+		else:
+			_stop_auto_spin()
+
 func _reset_spin_state() -> void:
 	is_spinning = false
 	if status_label:
@@ -549,14 +598,25 @@ func _update_ui() -> void:
 		balance_label.text = "Credits: %.2f" % balance
 	if bet_label:
 		bet_label.text = "Bet: %.2f" % current_bet
+	if lines_label:
+		lines_label.text = "Lines: %d" % bet_lines
+	if bet_per_line_label:
+		bet_per_line_label.text = "Bet/Line: %.2f" % (current_bet / float(bet_lines))
 	if win_label:
 		win_label.text = "Win: %.2f" % total_win
 	if spin_button:
 		spin_button.disabled = is_spinning
 	if minus_button:
+		minus_button.disabled = is_spinning or is_auto_spinning
 		minus_button.disabled = is_spinning
 	if plus_button:
 		plus_button.disabled = is_spinning
+		if auto_button:
+			if is_auto_spinning:
+				auto_button.text = "Stop"
+			else:
+				auto_button.text = "Auto 50"
+
 
 func _show_error(message: String) -> void:
 	print("ERROR: ", message)
@@ -572,3 +632,211 @@ func _show_error(message: String) -> void:
 
 func _generate_session_id() -> String:
 	return "session_%d_%d" % [Time.get_unix_time_from_system(), randi() % 10000]
+
+func _create_top_right_buttons() -> void:
+	# 创建右上角按钮容器
+	var button_container = HBoxContainer.new()
+	button_container.name = "TopRightButtons"
+	button_container.position = Vector2(size.x - 220, 20)
+	button_container.custom_minimum_size = Vector2(200, 40)
+	button_container.add_theme_constant_override("separation", 10)
+
+	# Help 按钮
+	help_button = Button.new()
+	help_button.text = "Help"
+	help_button.custom_minimum_size = Vector2(90, 40)
+	help_button.add_theme_font_size_override("font_size", 16)
+	button_container.add_child(help_button)
+
+	# Exit 按钮
+	exit_button = Button.new()
+	exit_button.text = "Exit"
+	exit_button.custom_minimum_size = Vector2(90, 40)
+	exit_button.add_theme_font_size_override("font_size", 16)
+	button_container.add_child(exit_button)
+
+	add_child(button_container)
+
+func _on_help_pressed() -> void:
+	if game_config == null or game_config.symbol_paytable.is_empty():
+		_show_error("Game config not loaded yet!")
+		return
+
+	_show_paytable_popup()
+
+func _on_exit_pressed() -> void:
+	get_tree().quit()
+
+func _show_paytable_popup() -> void:
+	# 创建弹窗
+	var popup = AcceptDialog.new()
+	popup.title = "Symbol Paytable"
+	popup.size = Vector2(800, 550)
+	popup.unresizable = false
+
+	# 创建内容容器
+	var scroll = ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(780, 500)
+	popup.add_child(scroll)
+
+	var content = VBoxContainer.new()
+	content.custom_minimum_size = Vector2(760, 0)
+	content.add_theme_constant_override("separation", 20)
+	scroll.add_child(content)
+
+	# 标题
+	var title = Label.new()
+	title.text = "Symbol Paytable - " + game_config.game_name
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 24)
+	title.add_theme_color_override("font_color", Color.GOLD)
+	title.custom_minimum_size = Vector2(740, 40)
+	content.add_child(title)
+
+	# 说明
+	var desc = Label.new()
+	desc.text = "Match symbols on active paylines to win! Higher matches = bigger prizes."
+	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	desc.add_theme_font_size_override("font_size", 14)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	desc.custom_minimum_size = Vector2(720, 50)
+	content.add_child(desc)
+
+	# 创建符号网格（每行3个）
+	var symbols_per_row = 3
+	var current_row = null
+	for i in range(game_config.symbol_paytable.size()):
+		if i % symbols_per_row == 0:
+			current_row = HBoxContainer.new()
+			current_row.alignment = BoxContainer.ALIGNMENT_CENTER
+			current_row.add_theme_constant_override("separation", 25)
+			content.add_child(current_row)
+
+		var symbol_data = game_config.symbol_paytable[i]
+		var symbol_id = symbol_data.get("symbol_id", "")
+		var symbol_name = symbol_data.get("symbol_name", "")
+		var multipliers = symbol_data.get("multipliers", [])
+
+		var card = _create_detailed_symbol_card(symbol_id, symbol_name, multipliers)
+		current_row.add_child(card)
+
+	add_child(popup)
+	popup.popup_centered()
+
+	popup.confirmed.connect(func(): popup.queue_free())
+	popup.close_requested.connect(func(): popup.queue_free())
+
+func _create_detailed_symbol_card(symbol_id: String, symbol_name: String, multipliers: Array) -> Control:
+	var card = Panel.new()
+	card.custom_minimum_size = Vector2(200, 180)
+
+	var vbox = VBoxContainer.new()
+	vbox.custom_minimum_size = Vector2(200, 180)
+	vbox.add_theme_constant_override("separation", 12)
+	card.add_child(vbox)
+
+	# 符号图标
+	var icon_label = Label.new()
+	icon_label.text = symbol_id.capitalize()
+	icon_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	icon_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	icon_label.add_theme_font_size_override("font_size", 40)
+	icon_label.custom_minimum_size = Vector2(200, 60)
+	vbox.add_child(icon_label)
+
+	# 符号名称
+	var name_label = Label.new()
+	name_label.text = symbol_name
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", 16)
+	name_label.custom_minimum_size = Vector2(200, 30)
+	vbox.add_child(name_label)
+
+	# 赔率列表（只显示 is_bet_line: true 的）
+	var mult_label = RichTextLabel.new()
+	mult_label.bbcode_enabled = true
+	mult_label.fit_content = true
+	mult_label.custom_minimum_size = Vector2(190, 80)
+	var mult_text = "[center]"
+	for mult in multipliers:
+		var is_bet_line = mult.get("is_bet_line", false)
+		if not is_bet_line:
+			continue  # 跳过不赔付的配置
+		var match_count = mult.get("match_count", 0)
+		var multiplier = mult.get("multiplier", 0.0)
+		var color = "#FFD700" if match_count >= 3 else "#FFFFFF"
+		mult_text += "[color=%s]%d match: %.1fx[/color]\n" % [color, match_count, multiplier]
+	mult_text += "[/center]"
+	mult_label.text = mult_text
+	vbox.add_child(mult_label)
+
+	return card
+
+func _on_auto_pressed() -> void:
+	if is_auto_spinning:
+		# 停止自动挂机
+		_stop_auto_spin()
+	else:
+		# 开始自动挂机
+		if balance < current_bet:
+			_show_error("Insufficient balance!")
+			return
+		_start_auto_spin()
+
+func _start_auto_spin() -> void:
+	is_auto_spinning = true
+	auto_spins_remaining = 50
+	
+	if status_label:
+		status_label.text = "Auto: %d" % auto_spins_remaining
+	
+	if auto_button:
+		auto_button.text = "Stop"
+		auto_button.disabled = false
+	
+	# 禁用其他按钮
+	if spin_button:
+		spin_button.disabled = true
+	if minus_button:
+		minus_button.disabled = true
+	if plus_button:
+		plus_button.disabled = true
+	
+	# 开始第一次旋转
+	_perform_spin()
+
+func _stop_auto_spin() -> void:
+	is_auto_spinning = false
+	auto_spins_remaining = 0
+	
+	if status_label:
+		status_label.text = "Auto stopped"
+	
+	if auto_button:
+		auto_button.text = "Auto 50"
+	
+	# 重新启用按钮
+	if spin_button:
+		spin_button.disabled = false
+	if minus_button:
+		minus_button.disabled = false
+	if plus_button:
+		plus_button.disabled = false
+
+func _continue_auto_spin() -> void:
+	if not is_auto_spinning:
+		return
+	
+	if auto_spins_remaining <= 0:
+		_stop_auto_spin()
+		return
+	
+	if balance < current_bet:
+		_stop_auto_spin()
+		if status_label:
+			status_label.text = "Auto stopped: No balance"
+		return
+	
+	# 等待一小段时间后继续
+	await get_tree().create_timer(1.0).timeout
+	_perform_spin()
