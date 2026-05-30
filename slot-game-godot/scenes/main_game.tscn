@@ -1,0 +1,98 @@
+[gd_scene format=3 uid="uid://bjyur5qjkm0kl"]
+
+[ext_resource type="Script" uid="uid://crdj8q2fjy3vl" path="res://scripts/main_game.gd" id="1_4vx0w"]
+
+[sub_resource type="LabelSettings" id="LabelSettings_0"]
+font_size = 48
+shadow_color = Color(0, 0, 0, 0.5)
+
+[node name="MainGame" type="Control" unique_id=1608083623]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_4vx0w")
+
+[node name="Background" type="ColorRect" parent="." unique_id=902015397]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.15, 0.15, 0.2, 1)
+
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=1641526274]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = 20.0
+offset_right = -20.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 20
+
+[node name="TitleLabel" type="Label" parent="VBoxContainer" unique_id=423241593]
+layout_mode = 2
+text = "🎰 Slot Game"
+label_settings = SubResource("LabelSettings_0")
+horizontal_alignment = 1
+
+[node name="TopBar" type="HBoxContainer" parent="VBoxContainer" unique_id=2007051250]
+layout_mode = 2
+theme_override_constants/separation = 40
+alignment = 1
+
+[node name="BalanceLabel" type="Label" parent="VBoxContainer/TopBar" unique_id=737694586]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Balance: 1000.00"
+
+[node name="BetLabel" type="Label" parent="VBoxContainer/TopBar" unique_id=1389068923]
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "Bet: 1.00"
+
+[node name="WinLabel" type="Label" parent="VBoxContainer/TopBar" unique_id=615815663]
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.84, 0, 1)
+theme_override_font_sizes/font_size = 20
+text = "Win: 0.00"
+
+[node name="ReelsContainer" type="Control" parent="VBoxContainer" unique_id=1545827729]
+custom_minimum_size = Vector2(450, 350)
+layout_mode = 2
+
+[node name="StatusLabel" type="Label" parent="VBoxContainer" unique_id=1565570170]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Ready to spin!"
+horizontal_alignment = 1
+
+[node name="ControlPanel" type="HBoxContainer" parent="VBoxContainer" unique_id=863826232]
+layout_mode = 2
+theme_override_constants/separation = 30
+alignment = 1
+
+[node name="MinusButton" type="Button" parent="VBoxContainer/ControlPanel" unique_id=1143004635]
+custom_minimum_size = Vector2(100, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "- Bet"
+
+[node name="SpinButton" type="Button" parent="VBoxContainer/ControlPanel" unique_id=234224982]
+custom_minimum_size = Vector2(160, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "SPIN"
+
+[node name="PlusButton" type="Button" parent="VBoxContainer/ControlPanel" unique_id=1838718061]
+custom_minimum_size = Vector2(100, 60)
+layout_mode = 2
+theme_override_font_sizes/font_size = 20
+text = "+ Bet"

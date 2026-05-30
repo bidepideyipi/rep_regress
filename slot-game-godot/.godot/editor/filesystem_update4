@@ -1,0 +1,4 @@
+res://scenes/main_game.tscn
+res://scripts/main_game.gd
+res://scripts/symbol_renderer.gd
+res://scripts/spin_response.gd
