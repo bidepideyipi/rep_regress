@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
@@ -12,6 +13,14 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 	"platform-games/slot-game/models"
 )
+
+// ClickHouseConfig ClickHouse配置
+type ClickHouseConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+}
 
 // ConfigManager Nacos配置管理器
 type ConfigManager struct {
@@ -91,6 +100,18 @@ func (cm *ConfigManager) LoadConfig() (*models.GameConfig, error) {
 // GetConfig 获取当前配置
 func (cm *ConfigManager) GetConfig() *models.GameConfig {
 	return cm.config
+}
+
+// GetRawConfig 获取Nacos原始配置内容
+func (cm *ConfigManager) GetRawConfig(dataID, group string) (string, error) {
+	content, err := cm.client.GetConfig(vo.ConfigParam{
+		DataId: dataID,
+		Group:  group,
+	})
+	if err != nil {
+		return "", fmt.Errorf("从Nacos获取配置失败: %w", err)
+	}
+	return content, nil
 }
 
 // WatchConfig 监听配置变化
@@ -176,6 +197,81 @@ func (cm *ConfigManager) StopWatchConfig(dataID, group string) error {
 func (cm *ConfigManager) Close() {
 	// Nacos SDK会自动处理连接关闭
 	log.Println("配置管理器已关闭")
+}
+
+// LoadAppConfig 从Nacos加载应用配置（app-config）
+func (cm *ConfigManager) LoadAppConfig(dataID, group string) (map[string]string, error) {
+	content, err := cm.client.GetConfig(vo.ConfigParam{
+		DataId: dataID,
+		Group:  group,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("从Nacos获取应用配置失败: %w", err)
+	}
+
+	if content == "" {
+		return nil, fmt.Errorf("应用配置内容为空")
+	}
+
+	// 解析properties格式
+	config := make(map[string]string)
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			config[key] = value
+		}
+	}
+
+	log.Printf("成功加载应用配置: %s/%s", group, dataID)
+	return config, nil
+}
+
+// GetClickHouseConfig 从应用配置中获取ClickHouse配置
+func (cm *ConfigManager) GetClickHouseConfig(dataID, group string) (*ClickHouseConfig, error) {
+	appConfig, err := cm.LoadAppConfig(dataID, group)
+	if err != nil {
+		return nil, err
+	}
+
+	// 从properties配置中提取ClickHouse配置
+	chConfig := &ClickHouseConfig{
+		Host:     getOrDefault(appConfig, "db.clickhouse.url", "127.0.0.1"),
+		Username: getOrDefault(appConfig, "db.clickhouse.user", "default"),
+		Password: getOrDefault(appConfig, "db.clickhouse.pwd", ""),
+	}
+
+	// 解析端口
+	if portStr, ok := appConfig["db.clickhouse.port"]; ok {
+		var port int
+		if _, err := fmt.Sscanf(portStr, "%d", &port); err == nil {
+			chConfig.Port = port
+		} else {
+			chConfig.Port = 9000
+		}
+	} else {
+		chConfig.Port = 9000
+	}
+
+	log.Printf("ClickHouse配置: host=%s, port=%d, user=%s",
+		chConfig.Host, chConfig.Port, chConfig.Username)
+
+	return chConfig, nil
+}
+
+// getOrDefault 从配置map中获取值，不存在则返回默认值
+func getOrDefault(config map[string]string, key, defaultValue string) string {
+	if value, ok := config[key]; ok {
+		return value
+	}
+	return defaultValue
 }
 
 // GetConfigInfo 获取配置信息

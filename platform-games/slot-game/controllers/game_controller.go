@@ -1,20 +1,27 @@
 package controllers
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/gin-gonic/gin"
 	"platform-games/slot-game/models"
 	"platform-games/slot-game/nacos"
+	"platform-games/slot-game/rocketmq"
 )
 
 // GameController 游戏控制器
 type GameController struct {
 	configManager *nacos.ConfigManager
 	gameInstance  *models.SlotGameGame
+	mqProducer    *rocketmq.Producer
 }
 
 // NewGameController 创建游戏控制器
@@ -22,6 +29,11 @@ func NewGameController(configManager *nacos.ConfigManager) *GameController {
 	return &GameController{
 		configManager: configManager,
 	}
+}
+
+// SetMQProducer 设置RocketMQ生产者
+func (gc *GameController) SetMQProducer(producer *rocketmq.Producer) {
+	gc.mqProducer = producer
 }
 
 // InitializeGame 初始化游戏
@@ -73,7 +85,7 @@ type SpinResponse struct {
 // @Router /api/game/spin [post]
 func (gc *GameController) Spin(c *gin.Context) {
 	startTime := time.Now()
-	
+
 	var req SpinRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, SpinResponse{
@@ -82,7 +94,7 @@ func (gc *GameController) Spin(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// 检查游戏实例是否初始化
 	if gc.gameInstance == nil {
 		c.JSON(http.StatusInternalServerError, SpinResponse{
@@ -91,7 +103,7 @@ func (gc *GameController) Spin(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// 构建游戏请求
 	gameReq := &models.SpinRequest{
 		UserID:    req.UserID,
@@ -100,7 +112,7 @@ func (gc *GameController) Spin(c *gin.Context) {
 		BetLines:  req.BetLines,
 		SessionID: req.SessionID,
 	}
-	
+
 	// 执行旋转
 	result, err := gc.gameInstance.Spin(gameReq)
 	if err != nil {
@@ -110,10 +122,10 @@ func (gc *GameController) Spin(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// 计算处理时间
 	processingTime := time.Since(startTime).Milliseconds()
-	
+
 	// 构建响应
 	// 判断是否为免费旋转：基于 BonusFeature 是否以 free_spins 开头
 	isFreeSpin := strings.HasPrefix(result.BonusFeature, "free_spins")
@@ -152,8 +164,118 @@ func (gc *GameController) Spin(c *gin.Context) {
 			Timestamp:        time.Now(),
 		},
 	}
-	
+
 	c.JSON(http.StatusOK, response)
+
+	// 异步写入ClickHouse日志
+	if gc.mqProducer != nil {
+		go gc.writeGameLog(gameReq, result, processingTime)
+	}
+}
+
+// writeGameLog 写入游戏日志到ClickHouse
+func (gc *GameController) writeGameLog(gameReq *models.SpinRequest, result *models.SpinResult, processingTime int64) {
+	// 生成日志ID
+	logID := fmt.Sprintf("log_%d_%s", time.Now().UnixNano(), gameReq.UserID)
+
+	// 获取客户端信息
+	clientIP := gc.getClientIP()
+
+	// 转换WinLines到ClickHouse格式 (Tuple数组)
+	winLinesTuples := make([][]interface{}, len(result.WinLines))
+	for i, wl := range result.WinLines {
+		symbols := make([]string, len(wl.Positions))
+		// 将位置转换为符号
+		for j, pos := range wl.Positions {
+			reelIdx := pos / 3
+			rowIdx := pos % 3
+			if reelIdx < len(result.ReelResult) && rowIdx < len(result.ReelResult[reelIdx]) {
+				symbols[j] = result.ReelResult[reelIdx][rowIdx]
+			}
+		}
+		isWild := uint8(0)
+		if wl.IsWild {
+			isWild = 1
+		}
+		// Tuple格式: [LineID, WinAmount, Symbols, IsWild]
+		winLinesTuples[i] = []interface{}{
+			uint16(wl.LineID),
+			decimal.NewFromFloat(wl.WinAmount),
+			symbols,
+			isWild,
+		}
+	}
+
+	// 序列化游戏结果
+	gameResultJSON, _ := json.Marshal(map[string]interface{}{
+		"total_win":     result.TotalWin,
+		"bonus_feature": result.BonusFeature,
+		"win_count":     len(result.WinLines),
+	})
+
+	// 判断是否免费旋转
+	isFreeSpin := uint8(0)
+	if strings.HasPrefix(result.BonusFeature, "free_spins") {
+		isFreeSpin = 1
+	}
+
+	logEntry := models.GameLogDetail{
+		LogID:          logID,
+		GameSessionID:  gameReq.SessionID,
+		IntegratorID:   "default", // TODO: 从请求或配置中获取
+		UserID:         gameReq.UserID,
+		GameID:         gameReq.GameID,
+		BetAmount:      decimal.NewFromFloat(gameReq.BetAmount),
+		WinAmount:      decimal.NewFromFloat(result.TotalWin),
+		NetResult:      decimal.NewFromFloat(result.TotalWin - gameReq.BetAmount),
+		BetLines:       uint16(gameReq.BetLines),
+		BetPerLine:     decimal.NewFromFloat(gameReq.BetAmount / float64(gameReq.BetLines)),
+		IsFreeSpin:     isFreeSpin,
+		BonusFeature:   result.BonusFeature,
+		DeviceType:     "unknown", // TODO: 从请求头获取
+		DeviceOS:       "unknown",
+		BrowserType:    "unknown",
+		IPAddress:      clientIP,
+		IPRegion:       "",
+		IPCountry:      "",
+		SessionID:      gameReq.SessionID,
+		ServerID:       gc.getLocalIP(),
+		ProcessingTime: uint32(processingTime),
+		ErrorCode:      0,
+		ErrorMessage:   "",
+		GameResultJSON: string(gameResultJSON),
+		ReelResult:     result.ReelResult,
+		WinLines:       winLinesTuples,
+		UserAgent:      "", // TODO: 从请求头获取
+		LogTime:        time.Now(),
+	}
+
+	if err := gc.mqProducer.SendGameLogAsync(logEntry); err != nil {
+		log.Printf("写入ClickHouse失败: %v", err)
+	}
+}
+
+// getClientIP 获取客户端IP（转换为uint32）
+func (gc *GameController) getClientIP() uint32 {
+	// TODO: 从gin.Context获取客户端IP
+	// 简化版本：返回0表示未知
+	return 0
+}
+
+// getLocalIP 获取本机IP地址
+func (gc *GameController) getLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return "127.0.0.1"
 }
 
 // GetConfig 获取游戏配置信息
@@ -199,14 +321,14 @@ func (gc *GameController) HealthCheck(c *gin.Context) {
 		"time":    time.Now(),
 		"service": "slot-game",
 	}
-	
+
 	if gc.gameInstance != nil {
 		health["game_initialized"] = true
 		health["game_id"] = gc.configManager.GetConfig().Config.GameID
 	} else {
 		health["game_initialized"] = false
 	}
-	
+
 	c.JSON(http.StatusOK, health)
 }
 
@@ -220,9 +342,9 @@ func (gc *GameController) RefreshConfig(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	gc.InitializeGame(config)
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "配置刷新成功",

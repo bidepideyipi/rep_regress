@@ -64,6 +64,19 @@ type AppConfig struct {
 		Port    int    `mapstructure:"port"`
 		Path    string `mapstructure:"path"`
 	} `mapstructure:"monitoring"`
+
+	RocketMQ struct {
+		NameServers []string `mapstructure:"name_servers"`
+		Producer    struct {
+			GroupName string `mapstructure:"group_name"`
+			Topic     string `mapstructure:"topic"`
+		} `mapstructure:"producer"`
+		Consumer struct {
+			GroupName string `mapstructure:"group_name"`
+			Topic     string `mapstructure:"topic"`
+			BatchSize int    `mapstructure:"batch_size"`
+		} `mapstructure:"consumer"`
+	} `mapstructure:"rocketmq"`
 }
 
 var config *AppConfig

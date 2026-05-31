@@ -1,7 +1,0 @@
-res://scripts/game_config.gd
-res://scripts/http_manager.gd
-res://scripts/main_game.gd
-res://scripts/spin_request.gd
-res://scripts/spin_response.gd
-res://scenes/main_game.tscn
-res://scripts/symbol_renderer.gd
