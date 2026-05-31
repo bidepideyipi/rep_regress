@@ -3,7 +3,7 @@
     "game_id": "game_001",
     "game_name": "Classic Slot",
     "version": "1.0.0",
-    "description": "经典老虎机游戏配置",
+    "description": "Max 5 lines",
     "config_type": "nacos",
     "last_updated": "2024-01-01T00:00:00Z"
   },
@@ -19,11 +19,11 @@
         {
           "match_count": 2,
           "multiplier": 3.0,
-          "is_bet_line": false
+          "is_bet_line": true
         },
         {
           "match_count": 3,
-          "multiplier": 10.0,
+          "multiplier": 8.0,
           "is_bet_line": true
         }
       ],
@@ -40,11 +40,11 @@
         {
           "match_count": 2,
           "multiplier": 5.0,
-          "is_bet_line": false
+          "is_bet_line": true
         },
         {
           "match_count": 3,
-          "multiplier": 15.0,
+          "multiplier": 10.0,
           "is_bet_line": true
         }
       ],
@@ -61,11 +61,11 @@
         {
           "match_count": 2,
           "multiplier": 8.0,
-          "is_bet_line": false
+          "is_bet_line": true
         },
         {
           "match_count": 3,
-          "multiplier": 20.0,
+          "multiplier": 15.0,
           "is_bet_line": true
         }
       ],
@@ -77,16 +77,16 @@
       "symbol_type": "normal",
       "sort_order": 4,
       "is_active": true,
-      "description": "李子符号",
+      "description": "桃子符号",
       "multipliers": [
         {
           "match_count": 2,
           "multiplier": 10.0,
-          "is_bet_line": false
+          "is_bet_line": true
         },
         {
           "match_count": 3,
-          "multiplier": 25.0,
+          "multiplier": 20.0,
           "is_bet_line": true
         }
       ],
@@ -103,11 +103,11 @@
         {
           "match_count": 2,
           "multiplier": 12.0,
-          "is_bet_line": false
+          "is_bet_line": true
         },
         {
           "match_count": 3,
-          "multiplier": 30.0,
+          "multiplier": 25.0,
           "is_bet_line": true
         }
       ],
@@ -124,11 +124,11 @@
         {
           "match_count": 2,
           "multiplier": 15.0,
-          "is_bet_line": false
+          "is_bet_line": true
         },
         {
           "match_count": 3,
-          "multiplier": 40.0,
+          "multiplier": 30.0,
           "is_bet_line": true
         }
       ],
@@ -145,7 +145,7 @@
         {
           "match_count": 2,
           "multiplier": 20.0,
-          "is_bet_line": false
+          "is_bet_line": true
         },
         {
           "match_count": 3,
@@ -166,7 +166,7 @@
         {
           "match_count": 2,
           "multiplier": 40.0,
-          "is_bet_line": false
+          "is_bet_line": true
         },
         {
           "match_count": 3,
@@ -187,7 +187,7 @@
         {
           "match_count": 2,
           "multiplier": 80.0,
-          "is_bet_line": false
+          "is_bet_line": true
         },
         {
           "match_count": 3,
@@ -213,7 +213,7 @@
         {
           "match_count": 3,
           "multiplier": 50.0,
-          "is_bet_line": false
+          "is_bet_line": true
         }
       ],
       "special_properties": [
@@ -233,10 +233,10 @@
       "reel_index": 1,
       "reel_name": "reel1",
       "symbol_weights": [
-        {"symbol_id": "cherry", "weight": 25},
-        {"symbol_id": "lemon", "weight": 20},
-        {"symbol_id": "orange", "weight": 18},
-        {"symbol_id": "plum", "weight": 15},
+        {"symbol_id": "cherry", "weight": 30},
+        {"symbol_id": "lemon", "weight": 24},
+        {"symbol_id": "orange", "weight": 20},
+        {"symbol_id": "plum", "weight": 16},
         {"symbol_id": "grape", "weight": 12},
         {"symbol_id": "watermelon", "weight": 8},
         {"symbol_id": "bell", "weight": 6},
@@ -249,26 +249,26 @@
       "reel_index": 2,
       "reel_name": "reel2",
       "symbol_weights": [
-        {"symbol_id": "cherry", "weight": 25},
-        {"symbol_id": "lemon", "weight": 20},
-        {"symbol_id": "orange", "weight": 18},
-        {"symbol_id": "plum", "weight": 15},
+        {"symbol_id": "cherry", "weight": 24},
+        {"symbol_id": "lemon", "weight": 30},
+        {"symbol_id": "orange", "weight": 20},
+        {"symbol_id": "plum", "weight": 16},
         {"symbol_id": "grape", "weight": 12},
         {"symbol_id": "watermelon", "weight": 8},
         {"symbol_id": "bell", "weight": 6},
         {"symbol_id": "seven", "weight": 4},
-        {"symbol_id": "wild", "weight": 2},
-        {"symbol_id": "scatter", "weight": 1}
+        {"symbol_id": "wild", "weight": 1},
+        {"symbol_id": "scatter", "weight": 2}
       ]
     },
     {
       "reel_index": 3,
       "reel_name": "reel3",
       "symbol_weights": [
-        {"symbol_id": "cherry", "weight": 25},
+        {"symbol_id": "cherry", "weight": 24},
         {"symbol_id": "lemon", "weight": 20},
-        {"symbol_id": "orange", "weight": 18},
-        {"symbol_id": "plum", "weight": 15},
+        {"symbol_id": "orange", "weight": 30},
+        {"symbol_id": "plum", "weight": 16},
         {"symbol_id": "grape", "weight": 12},
         {"symbol_id": "watermelon", "weight": 8},
         {"symbol_id": "bell", "weight": 6},
@@ -304,9 +304,9 @@
     ]
   },
   "game_settings": {
-    "min_bet": 0.1,
+    "min_bet": 0.5,
     "max_bet": 1000.0,
-    "default_bet": 1.0,
+    "default_bet": 5.0,
     "currency": "CNY",
     "volatility": "medium",
     "rtp": 96.5,

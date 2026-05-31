@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,17 +12,20 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/gin-gonic/gin"
 	"platform-games/slot-game/models"
 	"platform-games/slot-game/nacos"
 	"platform-games/slot-game/rocketmq"
+	"platform-games/slot-game/rtp"
+
+	"github.com/gin-gonic/gin"
 )
 
 // GameController 游戏控制器
 type GameController struct {
-	configManager *nacos.ConfigManager
-	gameInstance  *models.SlotGameGame
-	mqProducer    *rocketmq.Producer
+	configManager  *nacos.ConfigManager
+	gameInstance   *models.SlotGameGame
+	mqProducer     *rocketmq.Producer
+	userRTPService *rtp.UserRTPService
 }
 
 // NewGameController 创建游戏控制器
@@ -34,6 +38,11 @@ func NewGameController(configManager *nacos.ConfigManager) *GameController {
 // SetMQProducer 设置RocketMQ生产者
 func (gc *GameController) SetMQProducer(producer *rocketmq.Producer) {
 	gc.mqProducer = producer
+}
+
+// SetUserRTPService 设置UserRTP服务
+func (gc *GameController) SetUserRTPService(service *rtp.UserRTPService) {
+	gc.userRTPService = service
 }
 
 // InitializeGame 初始化游戏
@@ -52,23 +61,23 @@ type SpinRequest struct {
 
 // SpinResponse 旋转响应
 type SpinResponse struct {
-	Success bool `json:"success"`
+	Success bool   `json:"success"`
 	Message string `json:"message,omitempty"`
 	Data    struct {
-		SessionID        string              `json:"session_id"`
-		UserID           string              `json:"user_id"`
-		GameID           string              `json:"game_id"`
-		BetAmount        float64             `json:"bet_amount"`
-		BetLines         int                 `json:"bet_lines"`
-		BetPerLine       float64             `json:"bet_per_line"`
-		WinAmount        float64             `json:"win_amount"`
-		NetResult        float64             `json:"net_result"`
-		IsFreeSpin       bool                `json:"is_free_spin"`
-		ReelResult       [][]string          `json:"reel_result"`
-		WinLines         []models.WinLine    `json:"win_lines"`
-		BonusFeature     string              `json:"bonus_feature"`
-		ProcessingTimeMs int64               `json:"processing_time_ms"`
-		Timestamp        time.Time           `json:"timestamp"`
+		SessionID        string           `json:"session_id"`
+		UserID           string           `json:"user_id"`
+		GameID           string           `json:"game_id"`
+		BetAmount        float64          `json:"bet_amount"`
+		BetLines         int              `json:"bet_lines"`
+		BetPerLine       float64          `json:"bet_per_line"`
+		WinAmount        float64          `json:"win_amount"`
+		NetResult        float64          `json:"net_result"`
+		IsFreeSpin       bool             `json:"is_free_spin"`
+		ReelResult       [][]string       `json:"reel_result"`
+		WinLines         []models.WinLine `json:"win_lines"`
+		BonusFeature     string           `json:"bonus_feature"`
+		ProcessingTimeMs int64            `json:"processing_time_ms"`
+		Timestamp        time.Time        `json:"timestamp"`
 	} `json:"data,omitempty"`
 }
 
@@ -113,6 +122,17 @@ func (gc *GameController) Spin(c *gin.Context) {
 		SessionID: req.SessionID,
 	}
 
+	// 检查RTP并调整符号权重（如果需要）
+	adjustedWeights := gc.checkAndAdjustRTPWeights(req.UserID)
+	if adjustedWeights != nil {
+		// 设置自定义权重
+		gc.gameInstance.ClearCustomWeights()
+		for reelIndex, weights := range adjustedWeights {
+			gc.gameInstance.SetCustomWeights(reelIndex, weights)
+		}
+		defer gc.gameInstance.ClearCustomWeights()
+	}
+
 	// 执行旋转
 	result, err := gc.gameInstance.Spin(gameReq)
 	if err != nil {
@@ -132,37 +152,37 @@ func (gc *GameController) Spin(c *gin.Context) {
 
 	response := SpinResponse{
 		Success: true,
-		Data: struct {
-			SessionID        string           `json:"session_id"`
-			UserID           string           `json:"user_id"`
-			GameID           string           `json:"game_id"`
-			BetAmount        float64          `json:"bet_amount"`
-			BetLines         int              `json:"bet_lines"`
-			BetPerLine       float64          `json:"bet_per_line"`
-			WinAmount        float64          `json:"win_amount"`
-			NetResult        float64          `json:"net_result"`
-			IsFreeSpin       bool             `json:"is_free_spin"`
-			ReelResult       [][]string       `json:"reel_result"`
-			WinLines         []models.WinLine `json:"win_lines"`
-			BonusFeature     string           `json:"bonus_feature"`
-			ProcessingTimeMs int64            `json:"processing_time_ms"`
-			Timestamp        time.Time        `json:"timestamp"`
-		}{
-			SessionID:        req.SessionID,
-			UserID:           req.UserID,
-			GameID:           gameReq.GameID,
-			BetAmount:        gameReq.BetAmount,
-			BetLines:         gameReq.BetLines,
-			BetPerLine:       gameReq.BetAmount / float64(gameReq.BetLines),
-			WinAmount:        result.TotalWin,
-			NetResult:        result.TotalWin - gameReq.BetAmount,
-			IsFreeSpin:       isFreeSpin,
-			ReelResult:       result.ReelResult,
-			WinLines:         result.WinLines,
-			BonusFeature:     result.BonusFeature,
-			ProcessingTimeMs: processingTime,
-			Timestamp:        time.Now(),
-		},
+	}
+	response.Data.SessionID = req.SessionID
+	response.Data.UserID = req.UserID
+	response.Data.GameID = gameReq.GameID
+	response.Data.BetAmount = gameReq.BetAmount
+	response.Data.BetLines = gameReq.BetLines
+	response.Data.BetPerLine = gameReq.BetAmount / float64(gameReq.BetLines)
+	response.Data.WinAmount = result.TotalWin
+	response.Data.NetResult = result.TotalWin - gameReq.BetAmount
+	response.Data.IsFreeSpin = isFreeSpin
+	response.Data.ReelResult = result.ReelResult
+	response.Data.WinLines = result.WinLines
+	response.Data.BonusFeature = result.BonusFeature
+	response.Data.ProcessingTimeMs = processingTime
+	response.Data.Timestamp = time.Now()
+
+	// 获取用户RTP数据（异步，不阻塞响应）
+	if gc.userRTPService != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+
+			userRTP, err := gc.userRTPService.GetUserRTP(ctx, req.UserID)
+			if err != nil {
+				log.Printf("获取用户RTP失败: user_id=%s, error=%v", req.UserID, err)
+				return
+			}
+
+			log.Printf("用户RTP数据: user_id=%s, rtp=%.4f, total_bet=%.2f, total_win=%.2f, net_result=%.2f, total_spins=%d, avg_bet=%.2f",
+				req.UserID, userRTP.RTP, userRTP.TotalBet, userRTP.TotalWin, userRTP.NetResult, userRTP.TotalSpins, userRTP.AvgBet)
+		}()
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -350,4 +370,104 @@ func (gc *GameController) RefreshConfig(c *gin.Context) {
 		"message": "配置刷新成功",
 		"data":    gc.configManager.GetConfigInfo(),
 	})
+}
+
+// checkAndAdjustRTPWeights 检查RTP并调整符号权重
+// 返回调整后的权重map，如果不需要调整则返回nil
+func (gc *GameController) checkAndAdjustRTPWeights(userID string) map[int][]models.SymbolWeight {
+	if gc.userRTPService == nil {
+		log.Printf("[RTP控制] userRTPService未初始化，跳过RTP控制")
+		return nil
+	}
+
+	// 同步获取用户RTP数据（短超时）
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	userRTP, err := gc.userRTPService.GetUserRTP(ctx, userID)
+	if err != nil {
+		log.Printf("[RTP控制] 获取用户RTP失败（跳过RTP控制）: user_id=%s, error=%v", userID, err)
+		return nil
+	}
+
+	// 获取配置的RTP阈值
+	configRTP := gc.configManager.GetConfig().GameSettings.RTP
+	maxBet := gc.configManager.GetConfig().GameSettings.MaxBet
+
+	// log.Printf("[RTP控制] user_id=%s, total_bet=%.2f, rtp=%.4f, config_rtp=%.4f",
+	// 	userID, userRTP.TotalBet, userRTP.RTP, configRTP)
+
+	// 检查条件：totalBet > 500 且 rtp >= 配置的RTP
+	if (userRTP.TotalBet > maxBet && userRTP.RTP*100 >= configRTP) {
+		log.Printf("[RTP控制] ✓ 触发RTP控制: user_id=%s, total_bet=%.2f > 500, rtp=%.4f >= %.4f",
+			userID, userRTP.TotalBet, userRTP.RTP*100, configRTP)
+
+		// 调整符号权重
+		return gc.adjustWeights()
+	}
+
+	return nil
+}
+
+// adjustWeights 调整符号权重
+// - plum、grape、watermelon、bell的weight降低一半
+// - seven、wild、scatter的weight设为0
+func (gc *GameController) adjustWeights() map[int][]models.SymbolWeight {
+	config := gc.configManager.GetConfig()
+	adjustedWeights := make(map[int][]models.SymbolWeight)
+
+	// 需要降低权重的符号（降低一半）
+	reduceHalfSymbols := map[string]bool{
+		"plum":       true,
+		"grape":      true,
+		"watermelon": true,
+		"bell":       true,
+	}
+
+	// 需要移除的符号（weight设为0）
+	removeSymbols := map[string]bool{
+		"seven":   true,
+		"wild":    true,
+		"scatter": true,
+	}
+
+	log.Printf("[RTP控制] 开始调整权重 - 移除符号: %v, 降低权重符号: %v",
+		[]string{"seven", "wild", "scatter"}, []string{"plum", "grape", "watermelon", "bell"})
+
+	// 遍历所有卷轴
+	for _, reel := range config.Reels {
+		reelIndex := reel.ReelIndex
+		var newWeights []models.SymbolWeight
+
+		// 处理每个符号的权重
+		for _, sw := range reel.SymbolWeights {
+			symbolID := sw.SymbolID
+			weight := sw.Weight
+
+			// 检查是否需要移除
+			if removeSymbols[symbolID] {
+				log.Printf("[RTP控制] 卷轴%d: 移除符号 %s (原权重=%d)", reelIndex, symbolID, weight)
+				continue // 跳过，即weight设为0
+			}
+
+			// 检查是否需要降低一半
+			if reduceHalfSymbols[symbolID] {
+				weight = weight / 2
+				if weight < 1 {
+					weight = 1
+				}
+				log.Printf("[RTP控制] 卷轴%d: 降低符号 %s 权重 %d -> %d", reelIndex, symbolID, sw.Weight, weight)
+			}
+
+			newWeights = append(newWeights, models.SymbolWeight{
+				SymbolID: symbolID,
+				Weight:   weight,
+			})
+		}
+
+		adjustedWeights[reelIndex] = newWeights
+		log.Printf("[RTP控制] 卷轴%d权重调整完成: %d个符号", reelIndex, len(newWeights))
+	}
+
+	return adjustedWeights
 }

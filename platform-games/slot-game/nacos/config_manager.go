@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
+
+	"platform-games/slot-game/models"
 
 	"github.com/nacos-group/nacos-sdk-go/v2/clients"
 	"github.com/nacos-group/nacos-sdk-go/v2/clients/config_client"
 	"github.com/nacos-group/nacos-sdk-go/v2/common/constant"
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
-	"platform-games/slot-game/models"
 )
 
 // ClickHouseConfig ClickHouse配置
@@ -20,6 +20,14 @@ type ClickHouseConfig struct {
 	Port     int
 	Username string
 	Password string
+}
+
+// RedisConfig Redis配置
+type RedisConfig struct {
+	Host     string
+	Port     int
+	Password string
+	DB       int
 }
 
 // ConfigManager Nacos配置管理器
@@ -34,13 +42,13 @@ type ConfigManager struct {
 
 // NewConfigManager 创建配置管理器
 func NewConfigManager(serverAddr string, gameID, namespace, group, dataID string) (*ConfigManager, error) {
-	// Nacos客户端配置
 	clientConfig := constant.NewClientConfig(
 		constant.WithTimeoutMs(5000),
 		constant.WithNotLoadCacheAtStart(true),
 		constant.WithLogDir("logs/nacos"),
 		constant.WithCacheDir("cache/nacos"),
 		constant.WithLogLevel("info"),
+		constant.WithNamespaceId(namespace),
 	)
 
 	// Nacos服务器配置
@@ -93,7 +101,7 @@ func (cm *ConfigManager) LoadConfig() (*models.GameConfig, error) {
 
 	cm.config = &config
 	log.Printf("成功加载游戏配置: %s (版本: %s)", config.Config.GameID, config.Config.Version)
-	
+
 	return &config, nil
 }
 
@@ -121,7 +129,7 @@ func (cm *ConfigManager) WatchConfig(onChange func(*models.GameConfig)) error {
 		Group:  cm.group,
 		OnChange: func(namespace, group, dataID, data string) {
 			log.Printf("配置变更通知: %s/%s/%s", namespace, group, dataID)
-			
+
 			// 解析新配置
 			var newConfig models.GameConfig
 			if err := json.Unmarshal([]byte(data), &newConfig); err != nil {
@@ -137,7 +145,7 @@ func (cm *ConfigManager) WatchConfig(onChange func(*models.GameConfig)) error {
 
 			cm.config = &newConfig
 			log.Printf("配置已更新: %s (版本: %s)", newConfig.Config.GameID, newConfig.Config.Version)
-			
+
 			// 调用回调函数
 			if onChange != nil {
 				onChange(&newConfig)
@@ -200,7 +208,7 @@ func (cm *ConfigManager) Close() {
 }
 
 // LoadAppConfig 从Nacos加载应用配置（app-config）
-func (cm *ConfigManager) LoadAppConfig(dataID, group string) (map[string]string, error) {
+func (cm *ConfigManager) LoadAppConfig(dataID, group string) (map[string]interface{}, error) {
 	content, err := cm.client.GetConfig(vo.ConfigParam{
 		DataId: dataID,
 		Group:  group,
@@ -213,21 +221,10 @@ func (cm *ConfigManager) LoadAppConfig(dataID, group string) (map[string]string,
 		return nil, fmt.Errorf("应用配置内容为空")
 	}
 
-	// 解析properties格式
-	config := make(map[string]string)
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) == 2 {
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			config[key] = value
-		}
+	// 解析JSON格式
+	var config map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &config); err != nil {
+		return nil, fmt.Errorf("解析应用配置失败: %w", err)
 	}
 
 	log.Printf("成功加载应用配置: %s/%s", group, dataID)
@@ -241,23 +238,27 @@ func (cm *ConfigManager) GetClickHouseConfig(dataID, group string) (*ClickHouseC
 		return nil, err
 	}
 
-	// 从properties配置中提取ClickHouse配置
 	chConfig := &ClickHouseConfig{
-		Host:     getOrDefault(appConfig, "db.clickhouse.url", "127.0.0.1"),
-		Username: getOrDefault(appConfig, "db.clickhouse.user", "default"),
-		Password: getOrDefault(appConfig, "db.clickhouse.pwd", ""),
+		Host:     "127.0.0.1",
+		Port:     9000,
+		Username: "default",
+		Password: "",
 	}
 
-	// 解析端口
-	if portStr, ok := appConfig["db.clickhouse.port"]; ok {
-		var port int
-		if _, err := fmt.Sscanf(portStr, "%d", &port); err == nil {
-			chConfig.Port = port
-		} else {
-			chConfig.Port = 9000
+	// 从JSON配置中提取ClickHouse配置
+	if clickhouse, ok := appConfig["clickhouse"].(map[string]interface{}); ok {
+		if host, ok := clickhouse["host"].(string); ok {
+			chConfig.Host = host
 		}
-	} else {
-		chConfig.Port = 9000
+		if port, ok := clickhouse["port"].(float64); ok {
+			chConfig.Port = int(port)
+		}
+		if username, ok := clickhouse["username"].(string); ok {
+			chConfig.Username = username
+		}
+		if password, ok := clickhouse["password"].(string); ok {
+			chConfig.Password = password
+		}
 	}
 
 	log.Printf("ClickHouse配置: host=%s, port=%d, user=%s",
@@ -266,12 +267,44 @@ func (cm *ConfigManager) GetClickHouseConfig(dataID, group string) (*ClickHouseC
 	return chConfig, nil
 }
 
-// getOrDefault 从配置map中获取值，不存在则返回默认值
-func getOrDefault(config map[string]string, key, defaultValue string) string {
-	if value, ok := config[key]; ok {
-		return value
+
+// GetRedisConfig 从应用配置中获取Redis配置
+func (cm *ConfigManager) GetRedisConfig(dataID, group string) (*RedisConfig, error) {
+	appConfig, err := cm.LoadAppConfig(dataID, group)
+	if err != nil {
+		return nil, err
 	}
-	return defaultValue
+
+	redisConfig := &RedisConfig{
+		Host:     "127.0.0.1",
+		Port:     6379,
+		Password: "",
+		DB:       0,
+	}
+
+	// 从JSON配置中提取Redis配置
+	if redis, ok := appConfig["redis"].(map[string]interface{}); ok {
+		if host, ok := redis["host"].(string); ok {
+			redisConfig.Host = host
+		}
+		if port, ok := redis["port"].(string); ok {
+			var portInt int
+			if _, err := fmt.Sscanf(port, "%d", &portInt); err == nil {
+				redisConfig.Port = portInt
+			}
+		}
+		if password, ok := redis["password"].(string); ok {
+			redisConfig.Password = password
+		}
+		if db, ok := redis["db"].(float64); ok {
+			redisConfig.DB = int(db)
+		}
+	}
+
+	log.Printf("Redis配置: host=%s, port=%d, db=%d",
+		redisConfig.Host, redisConfig.Port, redisConfig.DB)
+
+	return redisConfig, nil
 }
 
 // GetConfigInfo 获取配置信息
@@ -293,25 +326,25 @@ func (cm *ConfigManager) GetConfigInfo() map[string]interface{} {
 		}
 
 		symbolPaytable = append(symbolPaytable, map[string]interface{}{
-			"symbol_id":     symbol.SymbolID,
-			"symbol_name":   symbol.SymbolName,
-			"symbol_type":   symbol.SymbolType,
-			"is_active":     symbol.IsActive,
-			"multipliers":   multipliers,
+			"symbol_id":   symbol.SymbolID,
+			"symbol_name": symbol.SymbolName,
+			"symbol_type": symbol.SymbolType,
+			"is_active":   symbol.IsActive,
+			"multipliers": multipliers,
 		})
 	}
 
 	return map[string]interface{}{
-		"game_id":       cm.config.Config.GameID,
-		"game_name":     cm.config.Config.GameName,
-		"version":       cm.config.Config.Version,
-		"description":   cm.config.Config.Description,
-		"last_updated":  cm.config.Config.LastUpdated,
-		"symbols_count": len(cm.config.Symbols),
-		"reels_count":   len(cm.config.Reels),
-		"pay_lines":     cm.config.PayTable.PayLineCount,
-		"min_bet":       cm.config.GameSettings.MinBet,
-		"max_bet":       cm.config.GameSettings.MaxBet,
+		"game_id":         cm.config.Config.GameID,
+		"game_name":       cm.config.Config.GameName,
+		"version":         cm.config.Config.Version,
+		"description":     cm.config.Config.Description,
+		"last_updated":    cm.config.Config.LastUpdated,
+		"symbols_count":   len(cm.config.Symbols),
+		"reels_count":     len(cm.config.Reels),
+		"pay_lines":       cm.config.PayTable.PayLineCount,
+		"min_bet":         cm.config.GameSettings.MinBet,
+		"max_bet":         cm.config.GameSettings.MaxBet,
 		"symbol_paytable": symbolPaytable,
 	}
 }

@@ -450,6 +450,181 @@ SET max_block_size = 65536;
 -- GROUP BY toDate(log_time), toHour(log_time), user_id;
 
 -- ============================================
+-- 实时 RTP 分析系统（物化视图自动聚合）
+-- ============================================
+
+-- ============================================
+-- 用户 RTP 实时聚合表（本地表）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS rtp_user_metrics_local
+(
+    user_id String,
+    integrator_id String,
+    game_id String,
+    time_window DateTime,
+    
+    total_bet Decimal(18, 4),
+    total_win Decimal(18, 4),
+    net_result Decimal(18, 4),
+    rtp Decimal(8, 4),
+    
+    spin_count UInt32,
+    avg_bet Decimal(18, 4),
+    max_bet Decimal(18, 4),
+    max_win Decimal(18, 4),
+    min_win Decimal(18, 4),
+    
+    win_rate Decimal(8, 4),
+    win_spin_count UInt32,
+    loss_spin_count UInt32,
+    
+    first_spin_time DateTime,
+    last_spin_time DateTime,
+    last_update DateTime DEFAULT now()
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(time_window)
+ORDER BY (integrator_id, user_id, game_id, time_window)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS rtp_user_metrics
+AS rtp_user_metrics_local
+ENGINE = Distributed('default', 'rtp_analytics', 'rtp_user_metrics_local', rand());
+
+-- ============================================
+-- 用户 RTP 实时聚合表（5分钟粒度）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS rtp_user_realtime_local
+(
+    user_id String,
+    integrator_id String,
+    game_id String,
+    time_window DateTime,
+    
+    total_bet Decimal(18, 4),
+    total_win Decimal(18, 4),
+    net_result Decimal(18, 4),
+    rtp Decimal(8, 4),
+    
+    spin_count UInt32,
+    avg_bet Decimal(18, 4),
+    max_win Decimal(18, 4),
+    
+    last_update DateTime DEFAULT now()
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMMDD(time_window)
+ORDER BY (integrator_id, user_id, game_id, time_window)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS rtp_user_realtime
+AS rtp_user_realtime_local
+ENGINE = Distributed('default', 'rtp_analytics', 'rtp_user_realtime_local', rand());
+
+-- ============================================
+-- 游戏 RTP 实时聚合表（本地表）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS rtp_game_metrics_local
+(
+    game_id String,
+    integrator_id String,
+    time_window DateTime,
+    
+    total_bet Decimal(18, 4),
+    total_win Decimal(18, 4),
+    net_result Decimal(18, 4),
+    rtp Decimal(8, 4),
+    
+    spin_count UInt32,
+    active_users UInt32,
+    avg_bet Decimal(18, 4),
+    max_bet Decimal(18, 4),
+    max_win Decimal(18, 4),
+    
+    volatility Decimal(8, 4),
+    win_rate Decimal(8, 4),
+    avg_net_result Decimal(18, 4),
+    
+    last_update DateTime DEFAULT now()
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(time_window)
+ORDER BY (integrator_id, game_id, time_window)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS rtp_game_metrics
+AS rtp_game_metrics_local
+ENGINE = Distributed('default', 'rtp_analytics', 'rtp_game_metrics_local', rand());
+
+-- ============================================
+-- 游戏 RTP 实时聚合表（5分钟粒度）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS rtp_game_realtime_local
+(
+    game_id String,
+    integrator_id String,
+    time_window DateTime,
+    
+    total_bet Decimal(18, 4),
+    total_win Decimal(18, 4),
+    rtp Decimal(8, 4),
+    spin_count UInt32,
+    active_users UInt32,
+    avg_bet Decimal(18, 4),
+    
+    last_update DateTime DEFAULT now()
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMMDD(time_window)
+ORDER BY (integrator_id, game_id, time_window)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS rtp_game_realtime
+AS rtp_game_realtime_local
+ENGINE = Distributed('default', 'rtp_analytics', 'rtp_game_realtime_local', rand());
+
+-- ============================================
+-- RTP 异常告警表
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS rtp_alerts_local
+(
+    alert_id String,
+    alert_type String,
+    severity String,
+    
+    user_id String,
+    game_id String,
+    integrator_id String,
+    
+    rtp Decimal(8, 4),
+    total_bet Decimal(18, 4),
+    total_win Decimal(18, 4),
+    spin_count UInt32,
+    
+    time_window DateTime,
+    detected_time DateTime,
+    resolved_time Nullable(DateTime),
+    
+    status String DEFAULT 'active',
+    notes String
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(detected_time)
+ORDER BY (integrator_id, alert_type, detected_time)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS rtp_alerts
+AS rtp_alerts_local
+ENGINE = Distributed('default', 'rtp_analytics', 'rtp_alerts_local', rand());
+
+
+
+-- ============================================
 -- 完成脚本执行
 -- ============================================
 SELECT 'ClickHouse数据库初始化脚本执行完成！' AS status;
@@ -466,16 +641,6 @@ SELECT
 FROM system.tables 
 WHERE database = 'rtp_analytics' 
   AND name LIKE '%local'
-ORDER BY name;
-
--- 查询所有创建的物化视图
-SELECT 
-    name AS view_name,
-    target_table,
-    engine AS view_engine
-FROM system.tables 
-WHERE database = 'rtp_analytics' 
-  AND engine = 'MaterializedView'
 ORDER BY name;
 
 SELECT '初始化脚本执行成功！' AS final_status;

@@ -9,8 +9,9 @@ import (
 
 // SlotGameGame 老虎机游戏逻辑
 type SlotGameGame struct {
-	config *GameConfig
-	rand   *rand.Rand
+	config       *GameConfig
+	rand         *rand.Rand
+	customWeights map[int][]SymbolWeight // 自定义符号权重（按卷轴索引）
 }
 
 // NewSlotGame 创建新游戏实例
@@ -18,7 +19,18 @@ func NewSlotGame(config *GameConfig) *SlotGameGame {
 	return &SlotGameGame{
 		config: config,
 		rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
+		customWeights: make(map[int][]SymbolWeight),
 	}
+}
+
+// SetCustomWeights 设置自定义符号权重
+func (game *SlotGameGame) SetCustomWeights(reelIndex int, weights []SymbolWeight) {
+	game.customWeights[reelIndex] = weights
+}
+
+// ClearCustomWeights 清除自定义权重
+func (game *SlotGameGame) ClearCustomWeights() {
+	game.customWeights = make(map[int][]SymbolWeight)
 }
 
 // Spin 执行旋转
@@ -60,12 +72,57 @@ func (game *SlotGameGame) generateReels() [][]string {
 	for i := 1; i <= 3; i++ {
 		reel := game.config.GetReelByIndex(i)
 		if reel != nil {
-			result[i-1] = reel.GenerateReelSymbols(game.config)
+			// 检查是否有自定义权重
+			if customWeights, ok := game.customWeights[i]; ok {
+				result[i-1] = game.generateReelWithWeights(customWeights)
+			} else {
+				result[i-1] = reel.GenerateReelSymbols(game.config)
+			}
 		} else {
 			// 默认配置
 			result[i-1] = []string{"cherry", "lemon", "orange"}
 		}
 	}
+	return result
+}
+
+// generateReelWithWeights 使用指定权重生成卷轴符号
+func (game *SlotGameGame) generateReelWithWeights(weights []SymbolWeight) []string {
+	// 计算总权重
+	totalWeight := 0
+	for _, sw := range weights {
+		totalWeight += sw.Weight
+	}
+
+	if totalWeight == 0 {
+		return []string{"cherry", "lemon", "orange"}
+	}
+
+	// 创建权重累积表
+	cumulativeWeights := make([]struct {
+		SymbolID  string
+		MaxWeight int
+	}, len(weights))
+
+	currentWeight := 0
+	for i, sw := range weights {
+		currentWeight += sw.Weight
+		cumulativeWeights[i].SymbolID = sw.SymbolID
+		cumulativeWeights[i].MaxWeight = currentWeight
+	}
+
+	// 生成3个位置的符号
+	result := make([]string, 3)
+	for pos := 0; pos < 3; pos++ {
+		randWeight := game.rand.Intn(totalWeight)
+		for _, cw := range cumulativeWeights {
+			if randWeight < cw.MaxWeight {
+				result[pos] = cw.SymbolID
+				break
+			}
+		}
+	}
+
 	return result
 }
 

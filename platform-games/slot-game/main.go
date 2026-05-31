@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"platform-games/slot-game/cache"
 	"platform-games/slot-game/config"
 	"platform-games/slot-game/consumer"
 	"platform-games/slot-game/controllers"
@@ -19,6 +20,7 @@ import (
 	"platform-games/slot-game/nacos"
 	"platform-games/slot-game/rocketmq"
 	"platform-games/slot-game/routers"
+	"platform-games/slot-game/rtp"
 
 	"github.com/gin-gonic/gin"
 )
@@ -106,6 +108,67 @@ func main() {
 				Database: "rtp_analytics",
 			},
 		}
+	}
+
+	// 初始化Redis缓存
+	var redisCache *cache.RedisCache
+	var userRTPService *rtp.UserRTPService
+	redisConfig, err := configManager.GetRedisConfig(ClickHouseConfigDataID, ClickHouseConfigGroup)
+	if err != nil {
+		log.Printf("从Nacos加载Redis配置失败，使用默认配置: %v", err)
+		redisConfig = &nacos.RedisConfig{
+			Host:     "127.0.0.1",
+			Port:     6379,
+			Password: "",
+			DB:       0,
+		}
+	}
+
+	redisCache, err = cache.NewRedisCache(&cache.RedisConfig{
+		Host:     redisConfig.Host,
+		Port:     redisConfig.Port,
+		Password: redisConfig.Password,
+		DB:       redisConfig.DB,
+	})
+	if err != nil {
+		log.Printf("初始化Redis缓存失败: %v", err)
+		redisCache = nil
+	} else {
+		defer func() {
+			log.Println("正在关闭Redis缓存...")
+			if redisCache != nil {
+				if err := redisCache.Close(); err != nil {
+					log.Printf("关闭Redis缓存失败: %v", err)
+				}
+			}
+		}()
+		log.Printf("Redis缓存初始化成功")
+
+		// 初始化UserRTP服务
+		userRTPService, err = rtp.NewUserRTPService(
+			appConfigForConsumer.ClickHouse.Host,
+			appConfigForConsumer.ClickHouse.Port,
+			appConfigForConsumer.ClickHouse.Username,
+			appConfigForConsumer.ClickHouse.Password,
+			appConfigForConsumer.ClickHouse.Database,
+			redisCache,
+			10*time.Second, // 缓存过期时间10秒
+		)
+		if err != nil {
+			log.Printf("初始化UserRTP服务失败: %v", err)
+		} else {
+			defer func() {
+				log.Println("正在关闭UserRTP服务...")
+				if userRTPService != nil {
+					if err := userRTPService.Close(); err != nil {
+						log.Printf("关闭UserRTP服务失败: %v", err)
+					}
+				}
+			}()
+			log.Printf("UserRTP服务初始化成功")
+		}
+		// 设置UserRTP服务到游戏控制器
+		gameController.SetUserRTPService(userRTPService)
 	}
 
 	// 初始化游戏消费者
