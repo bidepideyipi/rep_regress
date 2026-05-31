@@ -1,0 +1,15 @@
+# Godot editor files
+.godot/
+
+# Import caches
+.import/
+
+# Export files
+export/
+build/
+
+# OS files
+.DS_Store
+*.swp
+*.swo
+*~

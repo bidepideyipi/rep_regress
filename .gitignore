@@ -64,6 +64,4 @@ coverage.txt
 coverage.html
 coverage.out
 platform-games/gateway/keys/public.pem
-platform-games/slot-game-godot/.godot/editor/editor_script_doc_cache.res
-platform-games/slot-game-godot/.godot/editor/editor_layout.cfg
 script/nacos_app_config.json
