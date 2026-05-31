@@ -10,30 +10,6 @@ import (
 	"github.com/nacos-group/nacos-sdk-go/v2/vo"
 )
 
-type Config struct {
-	ClickHouse struct {
-		Host     string `json:"host"`
-		Port     int    `json:"port"`
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Database string `json:"database"`
-	} `json:"clickhouse"`
-	RocketMQ struct {
-		NameServers []string `json:"name_servers"`
-		Producer    struct {
-			GroupName string `json:"group_name"`
-			Topic     string `json:"topic"`
-		} `json:"producer"`
-		Consumer struct {
-			GroupName string `json:"group_name"`
-			Topic     string `json:"topic"`
-			BatchSize int    `json:"batch_size"`
-		} `json:"consumer"`
-	} `json:"rocket_mq"`
-	AggregateInterval string `json:"aggregate_interval"`
-	AlertInterval     string `json:"alert_interval"`
-}
-
 func LoadConfigFromNacos(nacosServerAddr, namespace, group, dataId string) (*Config, error) {
 	clientConfig := constant.NewClientConfig(
 		constant.WithTimeoutMs(5000),
@@ -77,14 +53,37 @@ func LoadConfigFromNacos(nacosServerAddr, namespace, group, dataId string) (*Con
 	return &cfg, nil
 }
 
-func (c *Config) GetAggregateInterval() time.Duration {
-	d, err := time.ParseDuration(c.AggregateInterval)
+/**
+ * @brief 获取用户聚合间隔
+ * @return time.Duration 聚合间隔
+ * @note 如果配置中没有指定聚合间隔，默认返回 5 分钟
+ */
+func (c *Config) GetAggregateUserInterval() time.Duration {
+	d, err := time.ParseDuration(c.AggregateUserInterval)
 	if err != nil {
 		return 5 * time.Minute
 	}
 	return d
 }
 
+/**
+ * @brief 获取游戏聚合间隔
+ * @return time.Duration 游戏聚合间隔
+ * @note 如果配置中没有指定游戏聚合间隔，默认返回 5 分钟
+ */
+func (c *Config) GetAggregateGameInterval() time.Duration {
+	d, err := time.ParseDuration(c.AggregateGameInterval)
+	if err != nil {
+		return 5 * time.Minute
+	}
+	return d
+}
+
+/**
+ * @brief 获取告警间隔
+ * @return time.Duration 告警间隔
+ * @note 如果配置中没有指定告警间隔，默认返回 10 分钟
+ */
 func (c *Config) GetAlertInterval() time.Duration {
 	d, err := time.ParseDuration(c.AlertInterval)
 	if err != nil {
@@ -93,6 +92,10 @@ func (c *Config) GetAlertInterval() time.Duration {
 	return d
 }
 
+/**
+ * @brief 获取 ClickHouse 连接地址
+ * @return string ClickHouse 连接地址
+ */
 func (c *Config) ClickHouseAddr() string {
 	return fmt.Sprintf("%s:%d", c.ClickHouse.Host, c.ClickHouse.Port)
 }

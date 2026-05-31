@@ -21,14 +21,20 @@ var (
 	dataId    = flag.String("data_id", "app-config", "Nacos data id")
 )
 
+/**
+ * @brief 主函数
+ * @note 加载配置，连接 ClickHouse，启动批处理服务，等待信号量，优雅停机
+ */
 func main() {
 	flag.Parse()
 
+	// 加载配置
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("加载配置失败: %v", err)
 	}
 
+	// 连接 ClickHouse
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr: []string{cfg.ClickHouseAddr()},
 		Auth: clickhouse.Auth{
@@ -38,23 +44,36 @@ func main() {
 		},
 		DialTimeout: 10 * time.Second,
 	})
+
+	// 失败时退出
 	if err != nil {
 		log.Fatalf("连接 ClickHouse 失败: %v", err)
 	}
 	defer conn.Close()
 
+	// 测试连接
 	if err := conn.Ping(context.Background()); err != nil {
 		log.Fatalf("Ping ClickHouse 失败: %v", err)
 	}
+
 	log.Printf("ClickHouse 连接成功: %s", cfg.ClickHouseAddr())
 
+	// 启动批处理服务
 	svc := processor.NewBatchService(conn, cfg)
 
 	log.Printf("RTP 批处理服务启动")
-	log.Printf("聚合间隔: %v, 告警间隔: %v", cfg.GetAggregateInterval(), cfg.GetAlertInterval())
+	log.Printf("用户聚合间隔: %v, 游戏聚合间隔: %v, 告警间隔: %v", cfg.GetAggregateUserInterval(), cfg.GetAggregateGameInterval(), cfg.GetAlertInterval())
 
 	svc.Start()
 
+	gracefullShutdown(svc)
+}
+
+/**
+ * @brief 优雅停机
+ * @param svc 批处理服务
+ */
+func gracefullShutdown(svc *processor.BatchService) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -64,6 +83,11 @@ func main() {
 	log.Println("服务已关闭")
 }
 
+/**
+ * @brief 加载配置
+ * @return *config.Config 配置
+ * @note 从 Nacos 加载配置
+ */
 func loadConfig() (*config.Config, error) {
 	cfg, err := config.LoadConfigFromNacos(
 		*nacosAddr,
