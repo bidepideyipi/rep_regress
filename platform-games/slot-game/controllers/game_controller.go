@@ -2,16 +2,18 @@ package controllers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/shopspring/decimal"
 
+	"platform-games/slot-game/cache"
+	"platform-games/slot-game/dao"
 	"platform-games/slot-game/models"
 	"platform-games/slot-game/nacos"
 	"platform-games/slot-game/rocketmq"
@@ -26,6 +28,9 @@ type GameController struct {
 	gameInstance   *models.SlotGameGame
 	mqProducer     *rocketmq.Producer
 	userRTPService *rtp.UserRTPService
+	redisCache     *cache.RedisCache
+	db             *sql.DB
+	userDAO        *dao.UserDAO
 }
 
 // NewGameController 创建游戏控制器
@@ -45,6 +50,17 @@ func (gc *GameController) SetUserRTPService(service *rtp.UserRTPService) {
 	gc.userRTPService = service
 }
 
+// SetRedisCache 设置Redis缓存
+func (gc *GameController) SetRedisCache(redisCache *cache.RedisCache) {
+	gc.redisCache = redisCache
+}
+
+// SetDB 设置数据库连接
+func (gc *GameController) SetDB(db *sql.DB) {
+	gc.db = db
+	gc.userDAO = dao.NewUserDAO(db)
+}
+
 // InitializeGame 初始化游戏
 func (gc *GameController) InitializeGame(config *models.GameConfig) {
 	gc.gameInstance = models.NewSlotGame(config)
@@ -53,10 +69,11 @@ func (gc *GameController) InitializeGame(config *models.GameConfig) {
 
 // SpinRequest 旋转请求
 type SpinRequest struct {
-	UserID    string  `json:"user_id" binding:"required"`
-	BetAmount float64 `json:"bet_amount" binding:"required,min=0.1"`
-	BetLines  int     `json:"bet_lines" binding:"required,min=1,max=20"`
-	SessionID string  `json:"session_id" binding:"required"`
+	IntegratorID string  `json:"integrator_id" binding:"required"`
+	UserID       string  `json:"user_id" binding:"required"`
+	BetAmount    float64 `json:"bet_amount" binding:"required,min=0.1"`
+	BetLines     int     `json:"bet_lines" binding:"required,min=1,max=20"`
+	SessionID    string  `json:"session_id" binding:"required"`
 }
 
 // SpinResponse 旋转响应
@@ -67,6 +84,7 @@ type SpinResponse struct {
 		SessionID        string           `json:"session_id"`
 		UserID           string           `json:"user_id"`
 		GameID           string           `json:"game_id"`
+		Balance          float64          `json:"balance"`
 		BetAmount        float64          `json:"bet_amount"`
 		BetLines         int              `json:"bet_lines"`
 		BetPerLine       float64          `json:"bet_per_line"`
@@ -113,11 +131,57 @@ func (gc *GameController) Spin(c *gin.Context) {
 		return
 	}
 
+	gameID := gc.configManager.GetConfig().Config.GameID
+
+	// 检查Free Spin状态
+	var remainingSpins int64
+	if gc.redisCache != nil {
+		var err error
+		remainingSpins, err = gc.redisCache.GetFreeSpinRemaining(req.IntegratorID, req.UserID, gameID)
+		if err != nil {
+			log.Printf("获取Free Spin状态失败: integrator=%s, user=%s, game=%s, error=%v",
+				req.IntegratorID, req.UserID, gameID, err)
+		}
+	}
+
+	// Free Spin期间不扣减下注金额（remainingSpins > 0 即为free spin）
+	isFreeSpin := remainingSpins > 0
+	betAmount := req.BetAmount
+	if isFreeSpin {
+		betAmount = 0
+	}
+
+	// 检查 userDAO 是否初始化
+	if gc.userDAO == nil {
+		log.Printf("[警告] userDAO未初始化，余额操作将被跳过")
+	}
+
+	// 如果不是Free Spin，先扣减用户余额
+	var userBeforeBet *models.UserInfo
+	if !isFreeSpin && gc.userDAO != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		var err error
+		userBeforeBet, err = gc.userDAO.DeductBalance(ctx, req.IntegratorID, req.UserID, req.BetAmount)
+		if err != nil {
+			log.Printf("扣减余额失败: integrator=%s, user=%s, amount=%.2f, error=%v",
+				req.IntegratorID, req.UserID, req.BetAmount, err)
+			c.JSON(http.StatusBadRequest, SpinResponse{
+				Success: false,
+				Message: "扣减余额失败: " + err.Error(),
+			})
+			return
+		}
+		log.Printf("余额扣减成功: integrator=%s, user=%s, 扣减=%.2f, 剩余=%.2f",
+			req.IntegratorID, req.UserID, req.BetAmount, userBeforeBet.Balance)
+	}
+
 	// 构建游戏请求
 	gameReq := &models.SpinRequest{
 		UserID:    req.UserID,
-		GameID:    gc.configManager.GetConfig().Config.GameID,
-		BetAmount: req.BetAmount,
+		GameID:    gameID,
+		BetAmount: betAmount,
 		BetLines:  req.BetLines,
 		SessionID: req.SessionID,
 	}
@@ -146,9 +210,94 @@ func (gc *GameController) Spin(c *gin.Context) {
 	// 计算处理时间
 	processingTime := time.Since(startTime).Milliseconds()
 
-	// 构建响应
-	// 判断是否为免费旋转：基于 BonusFeature 是否以 free_spins 开头
-	isFreeSpin := strings.HasPrefix(result.BonusFeature, "free_spins")
+	// 处理Free Spin逻辑
+	var totalFreeSpins int64
+
+	if gc.redisCache != nil && result.FreeSpinInfo != nil {
+		// 如果触发了新的Free Spin
+		if result.FreeSpinInfo.TriggeredCount > 0 {
+			triggeredCount := result.FreeSpinInfo.TriggeredCount
+
+			// 设置TTL为7天（604800秒）
+			ttl := 7 * 24 * time.Hour
+
+			if remainingSpins > 0 {
+				// 已经在Free Spin中，累加次数
+				newRemainingSpins, err := gc.redisCache.AddFreeSpinRemaining(
+					req.IntegratorID, req.UserID, gameID, triggeredCount, ttl)
+				if err != nil {
+					log.Printf("累加Free Spin失败: %v", err)
+				} else {
+					remainingSpins = newRemainingSpins
+				}
+				log.Printf("[Free Spin] 重触发: integrator=%s, user=%s, game=%s, 增加=%d, 剩余=%d",
+					req.IntegratorID, req.UserID, gameID, triggeredCount, remainingSpins)
+			} else {
+				// 首次触发Free Spin
+				err := gc.redisCache.SetFreeSpinRemaining(
+					req.IntegratorID, req.UserID, gameID, triggeredCount, ttl)
+				if err != nil {
+					log.Printf("设置Free Spin失败: %v", err)
+				} else {
+					remainingSpins = triggeredCount
+				}
+				log.Printf("[Free Spin] 首次触发: integrator=%s, user=%s, game=%s, 次数=%d",
+					req.IntegratorID, req.UserID, gameID, triggeredCount)
+			}
+			totalFreeSpins = triggeredCount
+		}
+
+		// 如果当前是Free Spin，扣减一次
+		if remainingSpins > 0 {
+			newRemaining, err := gc.redisCache.DecrementFreeSpin(
+				req.IntegratorID, req.UserID, gameID)
+			if err != nil {
+				log.Printf("扣减Free Spin失败: %v", err)
+			} else {
+				remainingSpins = newRemaining
+			}
+		}
+	}
+
+		// 如果有中奖金额，增加用户余额
+		if result.TotalWin > 0 && gc.userDAO != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+
+			_, err := gc.userDAO.AddBalance(ctx, req.IntegratorID, req.UserID, result.TotalWin)
+			if err != nil {
+				log.Printf("增加余额失败: integrator=%s, user=%s, amount=%.2f, error=%v",
+					req.IntegratorID, req.UserID, result.TotalWin, err)
+				// 中奖增加失败不影响响应，记录日志即可
+			} else {
+				log.Printf("余额增加成功: integrator=%s, user=%s, 增加=%.2f",
+					req.IntegratorID, req.UserID, result.TotalWin)
+			}
+		}
+
+		// 获取用户最新余额用于响应
+		var userBalance float64
+		if gc.userDAO != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			log.Printf("[查询余额] integrator_id=%s, user_id=%s", req.IntegratorID, req.UserID)
+			user, err := gc.userDAO.GetUserByIntegratorAndID(ctx, req.IntegratorID, req.UserID)
+			if err != nil {
+				log.Printf("获取用户余额失败: %v", err)
+			} else if user != nil {
+				userBalance = user.Balance
+				log.Printf("[查询余额成功] balance=%.2f", userBalance)
+			} else {
+				log.Printf("[查询余额] 用户不存在")
+			}
+		}
+
+		// 构建响应
+		bonusFeature := ""
+	if totalFreeSpins > 0 {
+		bonusFeature = fmt.Sprintf("free_spins_%d", totalFreeSpins)
+	}
 
 	response := SpinResponse{
 		Success: true,
@@ -156,15 +305,16 @@ func (gc *GameController) Spin(c *gin.Context) {
 	response.Data.SessionID = req.SessionID
 	response.Data.UserID = req.UserID
 	response.Data.GameID = gameReq.GameID
+	response.Data.Balance = userBalance
 	response.Data.BetAmount = gameReq.BetAmount
 	response.Data.BetLines = gameReq.BetLines
 	response.Data.BetPerLine = gameReq.BetAmount / float64(gameReq.BetLines)
 	response.Data.WinAmount = result.TotalWin
 	response.Data.NetResult = result.TotalWin - gameReq.BetAmount
-	response.Data.IsFreeSpin = isFreeSpin
+	response.Data.IsFreeSpin = remainingSpins > 0
 	response.Data.ReelResult = result.ReelResult
 	response.Data.WinLines = result.WinLines
-	response.Data.BonusFeature = result.BonusFeature
+	response.Data.BonusFeature = bonusFeature
 	response.Data.ProcessingTimeMs = processingTime
 	response.Data.Timestamp = time.Now()
 
@@ -189,12 +339,12 @@ func (gc *GameController) Spin(c *gin.Context) {
 
 	// 异步写入ClickHouse日志
 	if gc.mqProducer != nil {
-		go gc.writeGameLog(gameReq, result, processingTime)
+		go gc.writeGameLog(gameReq, result, processingTime, remainingSpins > 0, bonusFeature)
 	}
 }
 
 // writeGameLog 写入游戏日志到ClickHouse
-func (gc *GameController) writeGameLog(gameReq *models.SpinRequest, result *models.SpinResult, processingTime int64) {
+func (gc *GameController) writeGameLog(gameReq *models.SpinRequest, result *models.SpinResult, processingTime int64, isFreeSpin bool, bonusFeature string) {
 	// 生成日志ID
 	logID := fmt.Sprintf("log_%d_%s", time.Now().UnixNano(), gameReq.UserID)
 
@@ -229,14 +379,14 @@ func (gc *GameController) writeGameLog(gameReq *models.SpinRequest, result *mode
 	// 序列化游戏结果
 	gameResultJSON, _ := json.Marshal(map[string]interface{}{
 		"total_win":     result.TotalWin,
-		"bonus_feature": result.BonusFeature,
+		"bonus_feature": bonusFeature,
 		"win_count":     len(result.WinLines),
 	})
 
 	// 判断是否免费旋转
-	isFreeSpin := uint8(0)
-	if strings.HasPrefix(result.BonusFeature, "free_spins") {
-		isFreeSpin = 1
+	isFreeSpinUint := uint8(0)
+	if isFreeSpin {
+		isFreeSpinUint = 1
 	}
 
 	logEntry := models.GameLogDetail{
@@ -250,8 +400,8 @@ func (gc *GameController) writeGameLog(gameReq *models.SpinRequest, result *mode
 		NetResult:      decimal.NewFromFloat(result.TotalWin - gameReq.BetAmount),
 		BetLines:       uint16(gameReq.BetLines),
 		BetPerLine:     decimal.NewFromFloat(gameReq.BetAmount / float64(gameReq.BetLines)),
-		IsFreeSpin:     isFreeSpin,
-		BonusFeature:   result.BonusFeature,
+		IsFreeSpin:     isFreeSpinUint,
+		BonusFeature:   bonusFeature,
 		DeviceType:     "unknown", // TODO: 从请求头获取
 		DeviceOS:       "unknown",
 		BrowserType:    "unknown",

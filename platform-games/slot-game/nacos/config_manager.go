@@ -30,6 +30,16 @@ type RedisConfig struct {
 	DB       int
 }
 
+// MySQLConfig MySQL配置
+type MySQLConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	Database string
+	Charset  string
+}
+
 // ConfigManager Nacos配置管理器
 type ConfigManager struct {
 	client    config_client.IConfigClient
@@ -207,6 +217,7 @@ func (cm *ConfigManager) Close() {
 	log.Println("配置管理器已关闭")
 }
 
+
 // LoadAppConfig 从Nacos加载应用配置（app-config）
 func (cm *ConfigManager) LoadAppConfig(dataID, group string) (map[string]interface{}, error) {
 	content, err := cm.client.GetConfig(vo.ConfigParam{
@@ -306,6 +317,66 @@ func (cm *ConfigManager) GetRedisConfig(dataID, group string) (*RedisConfig, err
 
 	return redisConfig, nil
 }
+
+// GetMySQLConfig 从应用配置中获取MySQL配置
+func (cm *ConfigManager) GetMySQLConfig(dataID, group string) (*MySQLConfig, error) {
+	appConfig, err := cm.LoadAppConfig(dataID, group)
+	if err != nil {
+		return nil, fmt.Errorf("加载应用配置失败: %w", err)
+	}
+
+	mysql, ok := appConfig["mysql"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("应用配置中缺少 mysql 配置")
+	}
+
+	// 验证必需字段
+	requiredFields := []string{"host", "port", "username", "password", "database"}
+	for _, field := range requiredFields {
+		if _, ok := mysql[field]; !ok {
+			return nil, fmt.Errorf("MySQL配置缺少必需字段: %s", field)
+		}
+	}
+
+	mysqlConfig := &MySQLConfig{
+		Charset: "utf8mb4",
+	}
+
+	// 从JSON配置中提取MySQL配置
+	if host, ok := mysql["host"].(string); ok {
+		mysqlConfig.Host = host
+	}
+
+	// port 支持字符串和数字类型
+	if port, ok := mysql["port"].(float64); ok {
+		mysqlConfig.Port = int(port)
+	} else if portStr, ok := mysql["port"].(string); ok && portStr != "" {
+		var portInt int
+		fmt.Sscanf(portStr, "%d", &portInt)
+		mysqlConfig.Port = portInt
+	}
+
+	if username, ok := mysql["username"].(string); ok {
+		mysqlConfig.Username = username
+	}
+	if password, ok := mysql["password"].(string); ok {
+		mysqlConfig.Password = password
+	}
+	if database, ok := mysql["database"].(string); ok {
+		mysqlConfig.Database = database
+	}
+	if charset, ok := mysql["charset"].(string); ok {
+		mysqlConfig.Charset = charset
+	}
+
+	// 验证端口
+	if mysqlConfig.Port <= 0 {
+		return nil, fmt.Errorf("无效的MySQL端口号: %d", mysqlConfig.Port)
+	}
+
+	return mysqlConfig, nil
+}
+
 
 // GetConfigInfo 获取配置信息
 func (cm *ConfigManager) GetConfigInfo() map[string]interface{} {

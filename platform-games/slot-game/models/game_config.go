@@ -122,10 +122,17 @@ type WinLine struct {
 
 // SpinResult 旋转结果
 type SpinResult struct {
-	ReelResult  [][]string
-	WinLines    []WinLine
-	TotalWin    float64
-	BonusFeature string
+	ReelResult     [][]string
+	WinLines       []WinLine
+	TotalWin       float64
+	BonusFeature   string
+	FreeSpinInfo   *FreeSpinInfo
+}
+
+// FreeSpinInfo Free Spin信息
+type FreeSpinInfo struct {
+	RemainingSpins int64 // Redis中剩余的free spin次数，>0 表示当前为free spin
+	TriggeredCount int64 // 本次触发的新free spin次数
 }
 
 // GetSymbolBy 根据ID获取符号

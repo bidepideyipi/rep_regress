@@ -58,3 +58,6 @@ func get_processing_time_ms() -> float:
 
 func get_timestamp() -> String:
 	return data.get("timestamp", "")
+
+func get_balance() -> float:
+	return data.get("balance", 0.0)

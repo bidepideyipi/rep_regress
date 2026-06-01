@@ -105,6 +105,78 @@ func (rc *RedisCache) userRTPKey(userID string) string {
 	return fmt.Sprintf("rtp:user:%s", userID)
 }
 
+// freeSpinKey 生成Free Spin缓存键
+// 格式: freespin:{integrator_id}:{user_id}:{game_id}
+func (rc *RedisCache) freeSpinKey(integratorID, userID, gameID string) string {
+	return fmt.Sprintf("freespin:%s:%s:%s", integratorID, userID, gameID)
+}
+
+// GetFreeSpinRemaining 获取剩余Free Spin次数
+func (rc *RedisCache) GetFreeSpinRemaining(integratorID, userID, gameID string) (int64, error) {
+	key := rc.freeSpinKey(integratorID, userID, gameID)
+
+	result, err := rc.client.Get(rc.ctx, key).Result()
+	if err == redis.Nil {
+		return 0, nil // 不存在则表示没有free spin
+	}
+	if err != nil {
+		return 0, fmt.Errorf("获取Free Spin失败: %w", err)
+	}
+
+	var remaining int64
+	if _, err := fmt.Sscanf(result, "%d", &remaining); err != nil {
+		return 0, fmt.Errorf("解析Free Spin数据失败: %w", err)
+	}
+
+	return remaining, nil
+}
+
+// SetFreeSpinRemaining 设置剩余Free Spin次数
+func (rc *RedisCache) SetFreeSpinRemaining(integratorID, userID, gameID string, remaining int64, ttl time.Duration) error {
+	key := rc.freeSpinKey(integratorID, userID, gameID)
+
+	if err := rc.client.Set(rc.ctx, key, remaining, ttl).Err(); err != nil {
+		return fmt.Errorf("设置Free Spin失败: %w", err)
+	}
+
+	return nil
+}
+
+// AddFreeSpinRemaining 增加剩余Free Spin次数（触发新free spin时使用）
+func (rc *RedisCache) AddFreeSpinRemaining(integratorID, userID, gameID string, addCount int64, ttl time.Duration) (int64, error) {
+	key := rc.freeSpinKey(integratorID, userID, gameID)
+
+	// 使用原子操作增加次数，并设置过期时间
+	pipe := rc.client.Pipeline()
+	incrCmd := pipe.IncrBy(rc.ctx, key, addCount)
+	pipe.Expire(rc.ctx, key, ttl)
+
+	if _, err := pipe.Exec(rc.ctx); err != nil {
+		return 0, fmt.Errorf("增加Free Spin失败: %w", err)
+	}
+
+	return incrCmd.Val(), nil
+}
+
+// DecrementFreeSpin 扣减一次Free Spin（原子操作）
+func (rc *RedisCache) DecrementFreeSpin(integratorID, userID, gameID string) (int64, error) {
+	key := rc.freeSpinKey(integratorID, userID, gameID)
+
+	// 使用原子递减操作
+	result, err := rc.client.Decr(rc.ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("扣减Free Spin失败: %w", err)
+	}
+
+	// 如果扣减后为0或负数，删除key
+	if result <= 0 {
+		rc.client.Del(rc.ctx, key)
+		return 0, nil
+	}
+
+	return result, nil
+}
+
 // DeleteUserRTP 删除用户RTP缓存
 func (rc *RedisCache) DeleteUserRTP(userID string) error {
 	key := rc.userRTPKey(userID)

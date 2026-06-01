@@ -17,6 +17,7 @@ import (
 	"platform-games/slot-game/consumer"
 	"platform-games/slot-game/controllers"
 	"platform-games/slot-game/models"
+	"platform-games/slot-game/mysql"
 	"platform-games/slot-game/nacos"
 	"platform-games/slot-game/rocketmq"
 	"platform-games/slot-game/routers"
@@ -109,8 +110,7 @@ func main() {
 			},
 		}
 	}
-
-	// 初始化Redis缓存
+		// 初始化Redis缓存
 	var redisCache *cache.RedisCache
 	var userRTPService *rtp.UserRTPService
 	redisConfig, err := configManager.GetRedisConfig(ClickHouseConfigDataID, ClickHouseConfigGroup)
@@ -166,11 +166,47 @@ func main() {
 				}
 			}()
 			log.Printf("UserRTP服务初始化成功")
+			// 设置UserRTP服务到游戏控制器
+			gameController.SetUserRTPService(userRTPService)
 		}
-		// 设置UserRTP服务到游戏控制器
-		gameController.SetUserRTPService(userRTPService)
 	}
 
+	// 设置Redis缓存到游戏控制器
+	gameController.SetRedisCache(redisCache)
+
+	// 初始化MySQL数据库（必须成功，否则退出）
+	log.Printf("===== 开始初始化MySQL数据库 =====")
+	mysqlConfig, err := configManager.GetMySQLConfig(ClickHouseConfigDataID, ClickHouseConfigGroup)
+	if err != nil {
+		log.Fatalf("从Nacos加载MySQL配置失败: %v", err)
+	}
+
+	db, err := mysql.NewDB(&mysql.DBConfig{
+		Host:         mysqlConfig.Host,
+		Port:         mysqlConfig.Port,
+		Username:     mysqlConfig.Username,
+		Password:     mysqlConfig.Password,
+		Database:     mysqlConfig.Database,
+		Charset:      mysqlConfig.Charset,
+		MaxOpenConns: 100,
+		MaxIdleConns: 20,
+		MaxLifetime:  time.Hour,
+	})
+	if err != nil {
+		log.Fatalf("MySQL数据库初始化失败: %v", err)
+	}
+
+	defer func() {
+		log.Println("正在关闭MySQL数据库...")
+		if db != nil {
+			if err := db.Close(); err != nil {
+				log.Printf("关闭MySQL数据库失败: %v", err)
+			}
+		}
+	}()
+	log.Printf("===== MySQL数据库初始化成功 =====")
+	gameController.SetDB(db.DB)
+	log.Printf("===== MySQL已设置到GameController =====")
 	// 初始化游戏消费者
 	gameConsumer, err := consumer.NewGameConsumer(appConfigForConsumer)
 	if err != nil {

@@ -55,14 +55,15 @@ func (game *SlotGameGame) Spin(request *SpinRequest) (*SpinResult, error) {
 	// 计算总奖金
 	totalWin := game.calculateTotalWin(winLines, request.BetAmount, request.BetLines)
 
-	// 检查特殊功能
-	bonusFeature := game.checkBonusFeatures(reelResult)
+	// 检查特殊功能（返回触发的free spin次数）
+	triggeredFreeSpins := game.checkBonusFeatures(reelResult)
 
 	return &SpinResult{
-		ReelResult:   reelResult,
-		WinLines:     winLines,
-		TotalWin:     totalWin,
-		BonusFeature: bonusFeature,
+		ReelResult:     reelResult,
+		WinLines:       winLines,
+		TotalWin:       totalWin,
+		BonusFeature:   "", // 由controller层设置
+		FreeSpinInfo:   &FreeSpinInfo{TriggeredCount: triggeredFreeSpins},
 	}, nil
 }
 
@@ -289,10 +290,8 @@ func (game *SlotGameGame) calculateTotalWin(winLines []WinLine, betAmount float6
 	return math.Round(totalWin*100) / 100 // 保留两位小数
 }
 
-// checkBonusFeatures 检查特殊功能
-func (game *SlotGameGame) checkBonusFeatures(reelResult [][]string) string {
-	var bonusFeature string
-
+// checkBonusFeatures 检查特殊功能，返回触发的free spin次数
+func (game *SlotGameGame) checkBonusFeatures(reelResult [][]string) int64 {
 	// 检查Scatter符号
 	scatterCount := 0
 	for _, reel := range reelResult {
@@ -308,14 +307,16 @@ func (game *SlotGameGame) checkBonusFeatures(reelResult [][]string) string {
 		if symbol != nil {
 			for _, prop := range symbol.SpecialProperties {
 				if prop.PropertyName == "free_spins" {
-					bonusFeature = fmt.Sprintf("free_spins_%s", prop.PropertyValue)
-					break
+					// 解析free_spins数量
+					var freeSpins int64
+					fmt.Sscanf(prop.PropertyValue, "%d", &freeSpins)
+					return freeSpins
 				}
 			}
 		}
 	}
 
-	return bonusFeature
+	return 0
 }
 
 // CalculateRTP 计算RTP

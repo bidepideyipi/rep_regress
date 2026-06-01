@@ -24,6 +24,7 @@ var balance: float = INITIAL_BALANCE
 var total_win: float = 0.0
 var is_spinning: bool = false
 
+var integrator_id: String = "test_integrator_001"
 var user_id: String = "user_godot_001"
 var session_id: String = ""
 
@@ -326,6 +327,7 @@ func _perform_spin() -> void:
 
 	var request = SpinRequest.new()
 	request.user_id = user_id
+	request.integrator_id = integrator_id
 	request.bet_amount = current_bet
 	request.bet_lines = bet_lines
 	request.session_id = session_id
@@ -462,8 +464,13 @@ func _finalize_spin_result(response: SpinResponse) -> void:
 				if symbol != null:
 					container.add_child(symbol)
 
-	balance -= current_bet
-	balance += win_amount
+	# 使用服务端返回的balance
+	var server_balance = response.get_balance()
+	if server_balance > 0:
+		balance = server_balance
+	else:
+		balance -= current_bet
+		balance += win_amount
 	total_win = win_amount
 
 	is_spinning = false
