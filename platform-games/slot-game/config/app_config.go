@@ -8,77 +8,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-// AppConfig 应用配置
-type AppConfig struct {
-	Server struct {
-		Port            int    `mapstructure:"port"`
-		Mode            string `mapstructure:"mode"`
-		ReadTimeout     int    `mapstructure:"read_timeout"`
-		WriteTimeout    int    `mapstructure:"write_timeout"`
-		ShutdownTimeout int    `mapstructure:"shutdown_timeout"`
-	} `mapstructure:"server"`
-
-	Nacos struct {
-		ServerAddr string `mapstructure:"server_addr"`
-		Namespace  string `mapstructure:"namespace"`
-		Group      string `mapstructure:"group"`
-		GameConfig struct {
-			DataID string `mapstructure:"data_id"`
-			GameID string `mapstructure:"game_id"`
-		} `mapstructure:"game_config"`
-		Timeout int `mapstructure:"timeout"`
-	} `mapstructure:"nacos"`
-
-	Database struct {
-		MySQL struct {
-			Host     string `mapstructure:"host"`
-			Port     int    `mapstructure:"port"`
-			Database string `mapstructure:"database"`
-			Username string `mapstructure:"username"`
-			Password string `mapstructure:"password"`
-			Charset  string `mapstructure:"charset"`
-			MaxIdle  int    `mapstructure:"max_idle"`
-			MaxOpen  int    `mapstructure:"max_open"`
-		} `mapstructure:"mysql"`
-		ClickHouse struct {
-			Host     string `mapstructure:"host"`
-			Port     int    `mapstructure:"port"`
-			Database string `mapstructure:"database"`
-			Username string `mapstructure:"username"`
-			Password string `mapstructure:"password"`
-		} `mapstructure:"clickhouse"`
-	} `mapstructure:"database"`
-
-	Log struct {
-		Level      string `mapstructure:"level"`
-		Format     string `mapstructure:"format"`
-		Output     string `mapstructure:"output"`
-		MaxSize    int    `mapstructure:"max_size"`
-		MaxBackups int    `mapstructure:"max_backups"`
-		MaxAge     int    `mapstructure:"max_age"`
-		Compress   bool   `mapstructure:"compress"`
-	} `mapstructure:"log"`
-
-	Monitoring struct {
-		Enabled bool   `mapstructure:"enabled"`
-		Port    int    `mapstructure:"port"`
-		Path    string `mapstructure:"path"`
-	} `mapstructure:"monitoring"`
-
-	RocketMQ struct {
-		NameServers []string `mapstructure:"name_servers"`
-		Producer    struct {
-			GroupName string `mapstructure:"group_name"`
-			Topic     string `mapstructure:"topic"`
-		} `mapstructure:"producer"`
-		Consumer struct {
-			GroupName string `mapstructure:"group_name"`
-			Topic     string `mapstructure:"topic"`
-			BatchSize int    `mapstructure:"batch_size"`
-		} `mapstructure:"consumer"`
-	} `mapstructure:"rocketmq"`
-}
-
 var config *AppConfig
 
 // LoadConfig 加载配置文件
@@ -177,4 +106,49 @@ func GetClickHouseDSN() string {
 func GetServerAddr() string {
 	cfg := GetConfig()
 	return fmt.Sprintf(":%d", cfg.Server.Port)
+}
+
+// GetRocketMQNameSrv 获取NameServer地址
+func GetRocketMQNameSrv() string {
+	cfg := GetConfig()
+	if len(cfg.RocketMQ.NameServers) == 0 {
+		return "127.0.0.1:9876"
+	}
+	return cfg.RocketMQ.NameServers[0]
+}
+
+// GetRocketMQProducerGroup 获取生产者组名
+func GetRocketMQProducerGroup() string {
+	cfg := GetConfig()
+	if cfg.RocketMQ.Producer.GroupName == "" {
+		return "slot_game_producer_group"
+	}
+	return cfg.RocketMQ.Producer.GroupName
+}
+
+// GetRocketMQTopic 获取Topic名称
+func GetRocketMQTopic() string {
+	cfg := GetConfig()
+	if cfg.RocketMQ.Producer.Topic == "" {
+		return "game_log_topic"
+	}
+	return cfg.RocketMQ.Producer.Topic
+}
+
+// GetRocketMQConsumerGroup 获取消费者组名
+func GetRocketMQConsumerGroup() string {
+	cfg := GetConfig()
+	if cfg.RocketMQ.Consumer.GroupName == "" {
+		return "slot_game_consumer_group"
+	}
+	return cfg.RocketMQ.Consumer.GroupName
+}
+
+// GetRocketMQConsumerBatchSize 获取消费者批量大小
+func GetRocketMQConsumerBatchSize() int {
+	cfg := GetConfig()
+	if cfg.RocketMQ.Consumer.BatchSize == 0 {
+		return 100
+	}
+	return cfg.RocketMQ.Consumer.BatchSize
 }

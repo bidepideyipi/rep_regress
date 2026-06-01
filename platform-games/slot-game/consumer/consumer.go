@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -18,80 +17,10 @@ import (
 	"github.com/apache/rocketmq-client-go/v2/primitive"
 )
 
-// AppConfig 应用配置结构
-type AppConfig struct {
-	RocketMQ   RocketMQConfig   `json:"rocket_mq"`
-	ClickHouse ClickHouseConfig `json:"clickhouse"`
-}
-
-// RocketMQConfig RocketMQ配置
-type RocketMQConfig struct {
-	NameServers []string       `json:"name_servers"`
-	Producer    ProducerConfig `json:"producer"`
-	Consumer    ConsumerConfig `json:"consumer"`
-	ACL         ACLConfig      `json:"acl,omitempty"`
-}
-
-// ProducerConfig 生产者配置
-type ProducerConfig struct {
-	GroupName  string `json:"group_name"`
-	Topic      string `json:"topic"`
-	Timeout    int    `json:"timeout"`
-	RetryTimes int    `json:"retry_times"`
-}
-
-// ConsumerConfig 消费者配置
-type ConsumerConfig struct {
-	GroupName   string `json:"group_name"`
-	Topic       string `json:"topic"`
-	BatchSize   int    `json:"batch_size"`
-	ThreadCount int    `json:"thread_count"`
-}
-
-// ACLConfig ACL配置
-type ACLConfig struct {
-	AccessKey string `json:"access_key"`
-	SecretKey string `json:"secret_key"`
-}
-
-// ClickHouseConfig ClickHouse配置
-type ClickHouseConfig struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Database string `json:"database"`
-}
-
-// ClickHouseWriter ClickHouse批量写入器
-type ClickHouseWriter struct {
-	conn          clickhouse.Conn
-	buffer        []models.GameLogDetail
-	mutex         sync.Mutex
-	cond          *sync.Cond
-	batchSize     int
-	maxWaitSec    int
-	lastFlushTime time.Time
-	running       bool
-	flushCount    int64
-	errorCount    int64
-	tableName     string
-	shutdownCh    chan struct{}
-}
-
-// GameConsumer 游戏消费者
-type GameConsumer struct {
-	appConfig      *AppConfig
-	chWriter       *ClickHouseWriter
-	rocketConsumer rocketmq.PushConsumer
-	shutdownCh     chan struct{}
-}
-
 // NewGameConsumer 创建游戏消费者
 func NewGameConsumer(appConfig *AppConfig) (*GameConsumer, error) {
 	gc := &GameConsumer{
-		appConfig:  appConfig,
-		shutdownCh: make(chan struct{}),
+		appConfig: appConfig,
 	}
 
 	// 初始化 ClickHouse Writer
@@ -113,24 +42,15 @@ func NewGameConsumer(appConfig *AppConfig) (*GameConsumer, error) {
 // NewClickHouseWriter 创建ClickHouseWriter
 func NewClickHouseWriter(appConfig *AppConfig) (*ClickHouseWriter, error) {
 	chConfig := appConfig.ClickHouse
-	if chConfig.Host == "" {
-		chConfig.Host = "127.0.0.1"
-	}
-	if chConfig.Port == 0 {
-		chConfig.Port = 9000
-	}
-	if chConfig.Username == "" {
-		chConfig.Username = "default"
-	}
-	if chConfig.Database == "" {
-		chConfig.Database = "rtp_analytics"
+	if chConfig.Host == "" || chConfig.Port == 0 || chConfig.Username == "" || chConfig.Database == "" {
+		log.Printf("[Consumer] ClickHouseHouse配置不完整，无法初始化ClickHouseWriter")
+		return nil, fmt.Errorf("ClickHouseHouse配置不完整，无法初始化ClickHouseWriter")
 	}
 
 	batchSize := 100
 	if appConfig.RocketMQ.Consumer.BatchSize > 0 {
 		batchSize = appConfig.RocketMQ.Consumer.BatchSize
 	}
-	maxWaitSec := 3
 
 	log.Printf("[Consumer] 初始化 ClickHouseWriter, host=%s:%d, batchSize=%d",
 		chConfig.Host, chConfig.Port, batchSize)
@@ -143,7 +63,7 @@ func NewClickHouseWriter(appConfig *AppConfig) (*ClickHouseWriter, error) {
 			Username: chConfig.Username,
 			Password: chConfig.Password,
 		},
-		DialTimeout: 10 * time.Second,
+		DialTimeout: 5 * time.Second,
 	})
 	if err != nil {
 		return nil, err
@@ -159,16 +79,11 @@ func NewClickHouseWriter(appConfig *AppConfig) (*ClickHouseWriter, error) {
 	log.Printf("[Consumer] ClickHouse连接成功")
 
 	writer := &ClickHouseWriter{
-		conn:       conn,
-		buffer:     make([]models.GameLogDetail, 0, batchSize),
-		batchSize:  batchSize,
-		maxWaitSec: maxWaitSec,
-		running:    true,
-		tableName:  "game_log_detail_local",
-		shutdownCh: make(chan struct{}),
+		conn:      conn,
+		buffer:    make([]models.GameLogDetail, 0, batchSize),
+		batchSize: batchSize,
+		tableName: "game_log_detail_local",
 	}
-	writer.cond = sync.NewCond(&writer.mutex)
-	writer.lastFlushTime = time.Now()
 
 	return writer, nil
 }
@@ -239,7 +154,6 @@ func (w *ClickHouseWriter) flushLocked() error {
 	}
 
 	w.buffer = w.buffer[:0]
-	w.lastFlushTime = time.Now()
 	atomic.AddInt64(&w.flushCount, 1)
 	log.Printf("[Consumer] 批量写入成功，总成功次数: %d", atomic.LoadInt64(&w.flushCount))
 
@@ -253,46 +167,14 @@ func (w *ClickHouseWriter) Flush() error {
 	return w.flushLocked()
 }
 
-// flushLoop 定时刷新协程
-func (w *ClickHouseWriter) flushLoop() {
-	ticker := time.NewTicker(time.Duration(w.maxWaitSec) * time.Second)
-	defer ticker.Stop()
-
-	log.Printf("[Consumer] 定时刷新协程启动，每 %d 秒刷新一次", w.maxWaitSec)
-
-	for {
-		select {
-		case <-w.shutdownCh:
-			log.Printf("[Consumer] 收到关闭信号，退出定时刷新")
-			return
-		case <-ticker.C:
-			w.cond.Signal()
-			w.mutex.Lock()
-			if len(w.buffer) > 0 && time.Since(w.lastFlushTime) >= time.Duration(w.maxWaitSec)*time.Second {
-				log.Printf("[Consumer] 定时刷新，缓冲区大小: %d", len(w.buffer))
-				if err := w.flushLocked(); err != nil {
-					log.Printf("[Consumer] 定时刷新失败: %v", err)
-				}
-			}
-			w.mutex.Unlock()
-		}
-	}
-}
-
 // Close 关闭写入器
 func (w *ClickHouseWriter) Close() error {
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-	w.running = false
-	close(w.shutdownCh)
-	w.cond.Signal()
-
 	log.Printf("[Consumer] 关闭写入器")
 
 	if w.conn != nil {
 		if len(w.buffer) > 0 {
 			log.Printf("[Consumer] 关闭前刷新剩余 %d 条数据", len(w.buffer))
-			w.flushLocked()
+			w.Flush()
 		}
 		return w.conn.Close()
 	}
@@ -313,9 +195,7 @@ func (gc *GameConsumer) parseRocketMQNameServers() string {
 		return "127.0.0.1:9876"
 	}
 	nsList := make([]string, len(gc.appConfig.RocketMQ.NameServers))
-	for i, ns := range gc.appConfig.RocketMQ.NameServers {
-		nsList[i] = ns
-	}
+	copy(nsList, gc.appConfig.RocketMQ.NameServers)
 	return strings.Join(nsList, ";")
 }
 
@@ -336,6 +216,10 @@ func (gc *GameConsumer) getConsumerGroupAndTopic() (string, string) {
 	return groupName, topic
 }
 
+/**
+ * @brief 初始化RocketMQ消费者
+ * @return error 初始化失败时返回错误
+ */
 func (gc *GameConsumer) initRocketMQConsumer() error {
 	nameServers := gc.parseRocketMQNameServers()
 	groupName, topic := gc.getConsumerGroupAndTopic()
@@ -351,6 +235,8 @@ func (gc *GameConsumer) initRocketMQConsumer() error {
 	rocketConsumer, err := rocketmq.NewPushConsumer(
 		consumer.WithGroupName(groupName),
 		consumer.WithNameServer(namesrv),
+		consumer.WithPullBatchSize(64),
+		consumer.WithPullInterval(5*time.Second),
 	)
 	if err != nil {
 		return fmt.Errorf("创建消费者失败: %v", err)
@@ -369,22 +255,16 @@ func (gc *GameConsumer) initRocketMQConsumer() error {
 
 			log.Printf("[Consumer] 解析成功, log_id=%s, game_id=%s", logEntry.LogID, logEntry.GameID)
 
-			// 写入失败时重试3次
-			var writeErr error
-			for retry := 0; retry < 3; retry++ {
-				if err := gc.chWriter.AddToBuffer(logEntry); err == nil {
-					writeErr = nil
-					break
-				}
-				writeErr = err
-				log.Printf("[Consumer] 写入失败，第%d次重试: %v", retry+1, err)
-				time.Sleep(100 * time.Millisecond * time.Duration(retry+1))
+			if err := gc.chWriter.AddToBuffer(logEntry); err != nil {
+				log.Printf("[Consumer] 写入失败: %v, msg_id=%s, log_id=%s", err, msg.MsgId, logEntry.LogID)
+				return consumer.ConsumeRetryLater, err
 			}
+		}
 
-			if writeErr != nil {
-				log.Printf("[Consumer] 写入失败（已重试3次）: %v, msg_id=%s, log_id=%s", writeErr, msg.MsgId, logEntry.LogID)
-				return consumer.ConsumeRetryLater, writeErr
-			}
+		// 批量处理完成后刷新到 ClickHouse，成功后再 ack
+		if err := gc.chWriter.Flush(); err != nil {
+			log.Printf("[Consumer] 刷新 ClickHouse 失败: %v", err)
+			return consumer.ConsumeRetryLater, err
 		}
 
 		return consumer.ConsumeSuccess, nil
@@ -399,9 +279,6 @@ func (gc *GameConsumer) initRocketMQConsumer() error {
 
 // Start 启动消费者
 func (gc *GameConsumer) Start() error {
-	// 启动定时刷新协程
-	go gc.chWriter.flushLoop()
-
 	if err := gc.rocketConsumer.Start(); err != nil {
 		return fmt.Errorf("启动消费者失败: %v", err)
 	}
@@ -412,8 +289,6 @@ func (gc *GameConsumer) Start() error {
 
 // Stop 停止消费者
 func (gc *GameConsumer) Stop() error {
-	close(gc.shutdownCh)
-
 	log.Printf("[Consumer] 正在关闭")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
