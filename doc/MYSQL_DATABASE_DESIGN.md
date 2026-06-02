@@ -31,20 +31,17 @@
 | 表编号 | 表名 | 中文名 | 用途说明 |
 |--------|------|------|----------|
 | 2.1 | integrator_config | 集成商配置表 | 存储集成商的配置信息和权限设置 |
-| 2.2.0 | game_config | 游戏配置主表 | 存储游戏基础配置信息 |
-| 2.2.1 | symbol_config | 符号配置表 | 存储游戏符号的基本配置信息 |
-| 2.2.2 | symbol_multiplier | 符号赔付倍数表 | 存储符号在不同连击数下的赔付倍数配置 |
-| 2.2.3 | symbol_special_property | 符号特殊属性表 | 存储符号的特殊属性配置 |
-| 2.2.4 | reel_config | 卷轴配置表 | 存储卷轴的基本信息 |
-| 2.2.5 | reel_symbol_weight | 卷轴符号权重表 | 存储每个卷轴中各个符号的权重配置 |
-| 2.2.6 | pay_table_config | 赔付表配置表 | 存储赔付规则的配置信息 |
+| 2.2 | game_config | 游戏配置表 | 存储游戏基础配置信息（详细配置在Nacos） |
 | 2.3 | user_info | 用户信息表 | 存储用户基本信息、登录信息和账户余额（独立行级锁） |
-| 2.3.5 | user_finance_stats | 用户财务统计表 | 存储用户游戏统计信息（不含余额，减少锁竞争） |
-| 2.4 | transaction_records | 交易记录表 | 存储用户资金变动记录 |
-| 2.5 | user_session | 用户会话表 | 存储用户游戏会话信息 |
-| 2.6 | game_config_version | 游戏配置版本表 | 存储游戏配置的历史版本 |
+| 2.4 | user_finance_stats | 用户财务统计表 | 存储用户游戏统计信息（不含余额，减少锁竞争） |
+| 2.5 | transaction_records | 交易记录表 | 存储用户资金变动记录 |
+| 2.6 | user_session | 用户会话表 | 存储用户游戏会话信息 |
+| 2.7 | jackpot_config | Jackpot配置表 | 存储Jackpot基础配置信息 |
+| 2.8 | jackpot_pool | Jackpot实时池表 | 存储Jackpot奖池实时金额（game_id="0"表示全局共享池） |
+| 2.9 | jackpot_win_record | Jackpot中奖记录表 | 存储Jackpot中奖记录 |
 
-**表数量统计**：核心业务表12个，其中游戏配置相关表7个（1个主表+6个关联表），用户相关表2个（user_info含余额，user_finance_stats含统计）
+**表数量统计**：核心业务表9个，其中用户相关表2个（user_info含余额，user_finance_stats含统计），Jackpot相关表3个<br>
+**说明**：游戏详细配置（符号、卷轴、权重、赔付表等）已在Nacos配置中心管理
 
 ---
 
@@ -101,17 +98,15 @@
 
 ---
 
-### 2.2 游戏配置相关表
+### 2.2 游戏配置表 (game_config)
 
-#### 2.2.0 游戏配置主表 (game_config) - 基础配置
-
-#### 2.2.1 game_config 表基本信息
+#### 2.2.1 表基本信息
 
 | 项目 | 内容 |
 |------|------|
 | 表名 | game_config |
-| 中文名 | 游戏配置表（基础信息） |
-| 用途 | 存储游戏基础配置信息，详细配置通过关联表管理 |
+| 中文名 | 游戏配置表 |
+| 用途 | 存储游戏基础配置信息，详细配置（符号、卷轴、权重等）在Nacos管理 |
 | 存储引擎 | InnoDB |
 | 字符集 | utf8mb4 |
 
@@ -131,6 +126,7 @@
 | rtp_target | DECIMAL | 5,2 | NO | 95.00 | NO | 目标RTP值 |
 | volatility_level | VARCHAR | 16 | NO | medium | NO | 波动性等级（low/medium/high） |
 | special_features | JSON | - | YES | NULL | NO | 特殊功能配置（保留JSON格式） |
+| nacos_config_id | VARCHAR | 64 | NO | - | NO | Nacos配置ID（关联详细配置） |
 | status | TINYINT | 1 | NO | 1 | NO | 状态（0-禁用，1-启用） |
 | version | INT | 11 | NO | 1 | NO | 配置版本号 |
 | remark | TEXT | - | YES | NULL | NO | 备注 |
@@ -144,6 +140,7 @@
 | PRIMARY | 主键索引 | game_id | - | 主键索引 |
 | idx_status | 普通索引 | status | BTREE | 状态查询索引 |
 | idx_game_type | 普通索引 | game_type | BTREE | 游戏类型查询索引 |
+| idx_nacos_config | 普通索引 | nacos_config_id | BTREE | Nacos配置ID查询索引 |
 | idx_version | 普通索引 | version | BTREE | 版本号查询索引 |
 
 #### 2.2.4 约束条件
@@ -156,332 +153,6 @@
 | CHECK | chk_max_bet | max_bet | 最大下注金额检查 |
 | CHECK | chk_reel_count | reel_count | 卷轴数量检查(1-10) |
 | CHECK | chk_symbol_count | symbol_count | 符号数量检查(1-20) |
-
----
-
-#### 2.2.1 符号配置表 (symbol_config)
-
-#### 2.2.1.1 表基本信息
-
-| 项目 | 内容 |
-|------|------|
-| 表名 | symbol_config |
-| 中文名 | 符号配置表 |
-| 用途 | 存储游戏符号的基本配置信息 |
-| 存储引擎 | InnoDB |
-| 字符集 | utf8mb4 |
-
-#### 2.2.1.2 字段设计
-
-| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
-|--------|------|------|----------|--------|------|------|
-| id | BIGINT | 20 | NO | AUTO_INCREMENT | YES | 自增主键 |
-| game_id | VARCHAR | 32 | NO | - | NO | 关联游戏ID |
-| symbol_id | VARCHAR | 32 | NO | - | NO | 符号ID（英文，如cherry） |
-| symbol_name | VARCHAR | 64 | NO | - | NO | 符号名称（英文，如cherry） |
-| symbol_type | VARCHAR | 16 | NO | normal | NO | 符号类型：normal、wild、scatter |
-| description | VARCHAR | 256 | YES | NULL | NO | 符号描述 |
-| is_active | TINYINT | 1 | NO | 1 | NO | 是否启用（0-否，1-是） |
-| sort_order | INT | 11 | NO | 0 | NO | 排序顺序 |
-| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
-| update_time | DATETIME | - | NO | CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | NO | 更新时间 |
-
-#### 2.2.1.3 索引设计
-
-| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
-|----------|----------|----------|----------|------|
-| PRIMARY | 主键索引 | id | - | 主键索引 |
-| uk_game_symbol | 唯一索引 | game_id, symbol_id | BTREE | 游戏和符号组合唯一索引 |
-| idx_symbol_type | 普通索引 | symbol_type | BTREE | 符号类型查询索引 |
-| idx_sort_order | 普通索引 | sort_order | BTREE | 排序查询索引 |
-
-#### 2.2.1.4 约束条件
-
-| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
-|----------|----------|----------|----------|
-| PRIMARY KEY | pk_symbol_config | id | 主键约束 |
-| UNIQUE KEY | uk_game_symbol | game_id, symbol_id | 游戏符号组合唯一约束 |
-| FOREIGN KEY | fk_game_id | game_id | 外键约束关联game_config表 |
-| CHECK | chk_symbol_type | symbol_type | 符号类型检查约束 |
-| CHECK | chk_is_active | is_active | 启用状态检查约束 |
-
----
-
-#### 2.2.2 符号赔付倍数表 (symbol_multiplier)
-
-#### 2.2.2.1 表基本信息
-
-| 项目 | 内容 |
-|------|------|
-| 表名 | symbol_multiplier |
-| 中文名 | 符号赔付倍数表 |
-| 用途 | 存储符号在不同连击数下的赔付倍数配置 |
-| 存储引擎 | InnoDB |
-| 字符集 | utf8mb4 |
-
-#### 2.2.2.2 字段设计
-
-| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
-|--------|------|------|----------|--------|------|------|
-| id | BIGINT | 20 | NO | AUTO_INCREMENT | YES | 自增主键 |
-| symbol_config_id | BIGINT | 20 | NO | - | NO | 关联符号配置ID |
-| match_count | INT | 11 | NO | - | NO | 连击数（如2、3、4、5） |
-| multiplier | DECIMAL | 10,2 | NO | 0.00 | NO | 赔付倍数 |
-| is_bet_line | TINYINT | 1 | NO | 1 | NO | 是否需要匹配下注线（0-否，1-是） |
-| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
-
-#### 2.2.2.3 索引设计
-
-| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
-|----------|----------|----------|----------|------|
-| PRIMARY | 主键索引 | id | - | 主键索引 |
-| uk_symbol_match | 唯一索引 | symbol_config_id, match_count | BTREE | 符号和连击数组合唯一索引 |
-| idx_multiplier | 普通索引 | multiplier | BTREE | 赔付倍数查询索引 |
-
-#### 2.2.2.4 约束条件
-
-| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
-|----------|----------|----------|----------|
-| PRIMARY KEY | pk_symbol_multiplier | id | 主键约束 |
-| UNIQUE KEY | uk_symbol_match | symbol_config_id, match_count | 符号连击数组合唯一约束 |
-| FOREIGN KEY | fk_symbol_config_id | symbol_config_id | 外键约束关联symbol_config表 |
-| CHECK | chk_match_count | match_count | 连击数检查约束(1-10) |
-| CHECK | chk_multiplier | multiplier | 赔付倍数检查约束(>0) |
-
----
-
-#### 2.2.3 符号特殊属性表 (symbol_special_property)
-
-#### 2.2.3.1 表基本信息
-
-| 项目 | 内容 |
-|------|------|
-| 表名 | symbol_special_property |
-| 中文名 | 符号特殊属性表 |
-| 用途 | 存储符号的特殊属性，如wild的可替代列表、scatter的免费旋转等 |
-| 存储引擎 | InnoDB |
-| 字符集 | utf8mb4 |
-
-#### 2.2.3.2 字段设计
-
-| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
-|--------|------|------|----------|--------|------|------|
-| id | BIGINT | 20 | NO | AUTO_INCREMENT | YES | 自增主键 |
-| symbol_config_id | BIGINT | 20 | NO | - | NO | 关联符号配置ID |
-| property_name | VARCHAR | 32 | NO | - | NO | 属性名称：substitute、free_spins、any_position等 |
-| property_value | VARCHAR | 256 | NO | - | NO | 属性值（JSON字符串或具体值） |
-| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
-
-#### 2.2.3.3 索引设计
-
-| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
-|----------|----------|----------|----------|------|
-| PRIMARY | 主键索引 | id | - | 主键索引 |
-| uk_symbol_property | 唯一索引 | symbol_config_id, property_name | BTREE | 符号属性组合唯一索引 |
-| idx_property_name | 普通索引 | property_name | BTREE | 属性名称查询索引 |
-
-#### 2.2.3.4 约束条件
-
-| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
-|----------|----------|----------|----------|
-| PRIMARY KEY | pk_symbol_special_property | id | 主键约束 |
-| UNIQUE KEY | uk_symbol_property | symbol_config_id, property_name | 符号属性组合唯一约束 |
-| FOREIGN KEY | fk_symbol_config_id | symbol_config_id | 外键约束关联symbol_config表 |
-
----
-
-#### 2.2.4 卷轴配置表 (reel_config)
-
-#### 2.2.4.1 表基本信息
-
-| 项目 | 内容 |
-|------|------|
-| 表名 | reel_config |
-| 中文名 | 卷轴配置表 |
-| 用途 | 存储卷轴的基本信息 |
-| 存储引擎 | InnoDB |
-| 字符集 | utf8mb4 |
-
-#### 2.2.4.2 字段设计
-
-| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
-|--------|------|------|----------|--------|------|------|
-| id | BIGINT | 20 | NO | AUTO_INCREMENT | YES | 自增主键 |
-| game_id | VARCHAR | 32 | NO | - | NO | 关联游戏ID |
-| reel_index | INT | 11 | NO | - | NO | 卷轴索引（1,2,3,4,5） |
-| reel_name | VARCHAR | 32 | NO | - | NO | 卷轴名称（如reel1, reel2） |
-| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
-
-#### 2.2.4.3 索引设计
-
-| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
-|----------|----------|----------|----------|------|
-| PRIMARY | 主键索引 | id | - | 主键索引 |
-| uk_game_reel | 唯一索引 | game_id, reel_index | BTREE | 游戏和卷轴索引组合唯一索引 |
-
-#### 2.2.4.4 约束条件
-
-| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
-|----------|----------|----------|----------|
-| PRIMARY KEY | pk_reel_config | id | 主键约束 |
-| UNIQUE KEY | uk_game_reel | game_id, reel_index | 游戏卷轴组合唯一约束 |
-| FOREIGN KEY | fk_game_id | game_id | 外键约束关联game_config表 |
-| CHECK | chk_reel_index | reel_index | 卷轴索引检查约束(1-10) |
-
----
-
-#### 2.2.5 卷轴符号权重表 (reel_symbol_weight)
-
-#### 2.2.5.1 表基本信息
-
-| 项目 | 内容 |
-|------|------|
-| 表名 | reel_symbol_weight |
-| 中文名 | 卷轴符号权重表 |
-| 用途 | 存储每个卷轴中各个符号的权重配置 |
-| 存储引擎 | InnoDB |
-| 字符集 | utf8mb4 |
-
-#### 2.2.5.2 字段设计
-
-| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
-|--------|------|------|----------|--------|------|------|
-| id | BIGINT | 20 | NO | AUTO_INCREMENT | YES | 自增主键 |
-| reel_config_id | BIGINT | 20 | NO | - | NO | 关联卷轴配置ID |
-| symbol_config_id | BIGINT | 20 | NO | - | NO | 关联符号配置ID |
-| weight | INT | 11 | NO | 0 | NO | 符号权重（权重越大出现概率越高） |
-| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
-
-#### 2.2.5.3 索引设计
-
-| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
-|----------|----------|----------|----------|------|
-| PRIMARY | 主键索引 | id | - | 主键索引 |
-| uk_reel_symbol | 唯一索引 | reel_config_id, symbol_config_id | BTREE | 卷轴和符号组合唯一索引 |
-| idx_weight | 普通索引 | weight | BTREE | 权重查询索引 |
-
-#### 2.2.5.4 约束条件
-
-| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
-|----------|----------|----------|----------|
-| PRIMARY KEY | pk_reel_symbol_weight | id | 主键约束 |
-| UNIQUE KEY | uk_reel_symbol | reel_config_id, symbol_config_id | 卷轴符号组合唯一约束 |
-| FOREIGN KEY | fk_reel_config_id | reel_config_id | 外键约束关联reel_config表 |
-| FOREIGN KEY | fk_symbol_config_id | symbol_config_id | 外键约束关联symbol_config表 |
-| CHECK | chk_weight | weight | 权重检查约束(>=0) |
-
----
-
-#### 2.2.6 赔付表配置 (pay_table_config)
-
-#### 2.2.6.1 表基本信息
-
-| 项目 | 内容 |
-|------|------|
-| 表名 | pay_table_config |
-| 中文名 | 赔付表配置表 |
-| 用途 | 存储赔付规则的配置信息 |
-| 存储引擎 | InnoDB |
-| 字符集 | utf8mb4 |
-
-#### 2.2.6.2 字段设计
-
-| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
-|--------|------|------|----------|--------|------|------|
-| id | BIGINT | 20 | NO | AUTO_INCREMENT | YES | 自增主键 |
-| game_id | VARCHAR | 32 | NO | - | NO | 关联游戏ID |
-| pay_line_count | INT | 11 | NO | 20 | NO | 赔付线数量 |
-| pay_line_pattern | JSON | - | YES | NULL | NO | 赔付线模式配置 |
-| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
-| update_time | DATETIME | - | NO | CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | NO | 更新时间 |
-
-#### 2.2.6.3 索引设计
-
-| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
-|----------|----------|----------|----------|------|
-| PRIMARY | 主键索引 | id | - | 主键索引 |
-| uk_game_paytable | 唯一索引 | game_id | BTREE | 游戏赔付表唯一索引 |
-
-#### 2.2.6.4 约束条件
-
-| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
-|----------|----------|----------|----------|
-| PRIMARY KEY | pk_pay_table_config | id | 主键约束 |
-| UNIQUE KEY | uk_game_paytable | game_id | 游戏赔付表唯一约束 |
-| FOREIGN KEY | fk_game_id | game_id | 外键约束关联game_config表 |
-| CHECK | chk_pay_line_count | pay_line_count | 赔付线数量检查约束(1-100) |
-
----
-
-#### 2.2.7 游戏配置数据结构规范化说明
-
-##### 规范化设计的优势
-
-| 优势 | 说明 | 效果 |
-|------|------|------|
-| **减少数据冗余** | 符号配置可在多个游戏间复用 | 降低存储成本，提高数据一致性 |
-| **稳定的数据结构** | 关系型表结构，约束明确 | 减少数据异常，提高数据质量 |
-| **便于查询和维护** | 支持标准SQL查询，无需解析JSON | 简化应用逻辑，提高查询性能 |
-| **版本控制精确** | 可以精确追踪单个符号或权重的变更 | 便于问题定位和配置回滚 |
-| **数据完整性保证** | 外键约束确保引用完整性 | 防止孤儿数据，保证数据一致性 |
-
-##### 表关系图
-
-```
-game_config (游戏配置主表)
-├─ symbol_config (符号配置) - 1:N
-│   ├─ symbol_multiplier (符号赔付倍数) - 1:N  
-│   └─ symbol_special_property (符号特殊属性) - 1:N
-├─ reel_config (卷轴配置) - 1:N
-│   └─ reel_symbol_weight (卷轴符号权重) - 1:N
-└─ pay_table_config (赔付表配置) - 1:1
-```
-
-##### 数据关联示例
-
-**查询游戏所有符号及赔付倍数**：
-```sql
-SELECT 
-    g.game_id,
-    g.game_name,
-    s.symbol_id,
-    s.symbol_name,
-    s.symbol_type,
-    m.match_count,
-    m.multiplier,
-    m.is_bet_line
-FROM game_config g
-LEFT JOIN symbol_config s ON g.game_id = s.game_id
-LEFT JOIN symbol_multiplier m ON s.id = m.symbol_config_id
-WHERE g.game_id = 'game_001'
-ORDER BY s.sort_order, m.match_count;
-```
-
-**查询特定卷轴的符号权重分布**：
-```sql
-SELECT 
-    g.game_id,
-    r.reel_index,
-    r.reel_name,
-    s.symbol_id,
-    s.symbol_name,
-    rsw.weight
-FROM game_config g
-JOIN reel_config r ON g.game_id = r.game_id
-JOIN reel_symbol_weight rsw ON r.id = rsw.reel_config_id
-JOIN symbol_config s ON rsw.symbol_config_id = s.id
-WHERE g.game_id = 'game_001' AND r.reel_index = 1
-ORDER BY rsw.weight DESC;
-```
-
-##### 配置迁移建议
-
-| 迁移阶段 | 操作内容 | 注意事项 |
-|----------|----------|----------|
-| **第一阶段** | 创建新表结构，保留原有JSON字段 | 确保新表结构完整，测试数据导入 |
-| **第二阶段** | 数据迁移，将JSON数据导入新表 | 保持数据一致性，处理异常数据 |
-| **第三阶段** | 应用层适配，支持新旧两种配置读取方式 | 确保平滑过渡，无业务中断 |
-| **第四阶段** | 验证新表数据正确性，删除旧JSON字段 | 充分测试，避免数据丢失 |
 
 ---
 
@@ -737,6 +408,159 @@ ORDER BY rsw.weight DESC;
 
 ---
 
+### 2.7 Jackpot配置表 (jackpot_config)
+
+#### 2.7.1 表基本信息
+
+| 项目 | 内容 |
+|------|------|
+| 表名 | jackpot_config |
+| 中文名 | Jackpot配置表 |
+| 用途 | 存储Jackpot基础配置信息，包括注入比例、种子金额等 |
+| 存储引擎 | InnoDB |
+| 字符集 | utf8mb4 |
+
+#### 2.7.2 字段设计
+
+| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
+|--------|------|------|----------|--------|------|------|
+| game_id | VARCHAR | 32 | NO | - | YES | 游戏ID（"0"表示全局配置） |
+| enabled | TINYINT | 1 | NO | 1 | NO | 是否启用（0-否，1-是） |
+| contribution_rate | DECIMAL | 5,4 | NO | 0.0100 | NO | 注入比例（1%） |
+| mini_seed | DECIMAL | 18,2 | NO | 100.00 | NO | Mini池种子金额 |
+| minor_seed | DECIMAL | 18,2 | NO | 500.00 | NO | Minor池种子金额 |
+| major_seed | DECIMAL | 18,2 | NO | 2000.00 | NO | Major池种子金额 |
+| grand_seed | DECIMAL | 18,2 | NO | 10000.00 | NO | Grand池种子金额 |
+| mini_ratio | DECIMAL | 4,3 | NO | 0.300 | NO | Mini池分配比例（30%） |
+| minor_ratio | DECIMAL | 4,3 | NO | 0.250 | NO | Minor池分配比例（25%） |
+| major_ratio | DECIMAL | 4,3 | NO | 0.250 | NO | Major池分配比例（25%） |
+| grand_ratio | DECIMAL | 4,3 | NO | 0.200 | NO | Grand池分配比例（20%） |
+| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
+| update_time | DATETIME | - | NO | CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | NO | 更新时间 |
+
+#### 2.7.3 索引设计
+
+| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
+|----------|----------|----------|----------|------|
+| PRIMARY | 主键索引 | game_id | - | 主键索引 |
+| idx_enabled | 普通索引 | enabled | BTREE | 启用状态查询索引 |
+
+#### 2.7.4 约束条件
+
+| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
+|----------|----------|----------|----------|
+| PRIMARY KEY | pk_jackpot_config | game_id | 主键约束 |
+| FOREIGN KEY | fk_jackpot_game | game_id | 外键约束关联game_config表（game_id="0"除外） |
+| CHECK | chk_enabled | enabled | 启用状态检查约束 |
+| CHECK | chk_ratios | mini_ratio+minor_ratio+major_ratio+grand_ratio | 分配比例总和为1 |
+
+---
+
+### 2.8 Jackpot实时池表 (jackpot_pool)
+
+#### 2.8.1 表基本信息
+
+| 项目 | 内容 |
+|------|------|
+| 表名 | jackpot_pool |
+| 中文名 | Jackpot实时池表 |
+| 用途 | 存储Jackpot奖池实时金额，Redis为主，DB为备份 |
+| 存储引擎 | InnoDB |
+| 字符集 | utf8mb4 |
+
+#### 2.8.2 字段设计
+
+| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
+|--------|------|------|----------|--------|------|------|
+| game_id | VARCHAR | 32 | NO | - | YES | 游戏ID（"0"表示全局共享池） |
+| pool_type | VARCHAR | 16 | NO | - | YES | 池子类型（mini/minor/major/grand） |
+| current_amount | DECIMAL | 18,2 | NO | 0.00 | NO | 当前金额 |
+| last_win_time | DATETIME | - | YES | NULL | NO | 最后中奖时间 |
+| win_count | BIGINT | 20 | NO | 0 | NO | 中奖次数 |
+| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
+| update_time | DATETIME | - | NO | CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP | NO | 更新时间 |
+
+#### 2.8.3 索引设计
+
+| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
+|----------|----------|----------|----------|------|
+| PRIMARY | 主键索引 | game_id, pool_type | - | 联合主键索引 |
+| idx_pool_type | 普通索引 | pool_type | BTREE | 池子类型查询索引 |
+| idx_last_win_time | 普通索引 | last_win_time | BTREE | 最后中奖时间查询索引 |
+
+#### 2.8.4 约束条件
+
+| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
+|----------|----------|----------|----------|
+| PRIMARY KEY | pk_jackpot_pool | game_id, pool_type | 联合主键约束 |
+| CHECK | chk_pool_type | pool_type | 池子类型检查约束 |
+| CHECK | chk_amount | current_amount | 金额非负检查约束 |
+
+#### 2.8.5 设计说明
+
+**混合池模式：**
+- **Mini/Minor/Major池**：各游戏独立（game_id为具体游戏ID）
+- **Grand池**：全局共享（game_id="0"），所有游戏共同注入
+
+**Redis Key设计：**
+```
+jackpot:{game_id}:{pool_type}:amount → DECIMAL
+
+# 示例：
+# jackpot:0:grand:amount     # 共享Grand池
+# jackpot:game_a:mini:amount  # 游戏A的Mini池
+```
+
+---
+
+### 2.9 Jackpot中奖记录表 (jackpot_win_record)
+
+#### 2.9.1 表基本信息
+
+| 项目 | 内容 |
+|------|------|
+| 表名 | jackpot_win_record |
+| 中文名 | Jackpot中奖记录表 |
+| 用途 | 存储Jackpot中奖记录，支持审计和统计 |
+| 存储引擎 | InnoDB |
+| 字符集 | utf8mb4 |
+
+#### 2.9.2 字段设计
+
+| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
+|--------|------|------|----------|--------|------|------|
+| transaction_id | VARCHAR | 64 | NO | - | YES | 交易ID |
+| integrator_id | VARCHAR | 32 | NO | - | NO | 集成商ID |
+| user_id | VARCHAR | 32 | NO | - | NO | 用户ID |
+| game_id | VARCHAR | 32 | NO | - | NO | 游戏ID |
+| pool_type | VARCHAR | 16 | NO | - | NO | 中奖池子类型 |
+| win_amount | DECIMAL | 18,2 | NO | - | NO | 中奖金额 |
+| pool_amount_before | DECIMAL | 18,2 | NO | - | NO | 中奖前池金额 |
+| pool_amount_after | DECIMAL | 18,2 | NO | - | NO | 中奖后池金额（重置为种子金额） |
+| session_id | VARCHAR | 64 | YES | NULL | NO | 游戏会话ID |
+| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
+
+#### 2.9.3 索引设计
+
+| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
+|----------|----------|----------|----------|------|
+| PRIMARY | 主键索引 | transaction_id | - | 主键索引 |
+| idx_user_id | 普通索引 | user_id | BTREE | 用户ID查询索引 |
+| idx_game_id | 普通索引 | game_id | BTREE | 游戏ID查询索引 |
+| idx_pool_type | 普通索引 | pool_type | BTREE | 池子类型查询索引 |
+| idx_create_time | 普通索引 | create_time | BTREE | 创建时间查询索引 |
+
+#### 2.9.4 约束条件
+
+| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
+|----------|----------|----------|----------|
+| PRIMARY KEY | pk_jackpot_win_record | transaction_id | 主键约束 |
+| FOREIGN KEY | fk_jackpot_integrator | integrator_id | 外键约束关联integrator_config表 |
+| CHECK | chk_pool_type | pool_type | 池子类型检查约束 |
+| CHECK | chk_win_amount | win_amount | 中奖金额检查约束 |
+
+---
+
 ## 3. 数据库性能优化
 
 ### 3.1 分表策略
@@ -761,6 +585,7 @@ ORDER BY rsw.weight DESC;
 | 集成商信息 | Redis | 30分钟 | 主动更新+过期更新 |
 | 用户信息 | Redis | 10分钟 | 主动更新+过期更新 |
 | 热门游戏统计 | Redis | 5分钟 | 实时更新 |
+| Jackpot奖池 | Redis | 永久 | 实时更新，DB异步备份 |
 
 ---
 
@@ -818,6 +643,8 @@ ORDER BY rsw.weight DESC;
 
 | 版本号 | 日期 | 修改内容 | 修改人 |
 |--------|------|----------|--------|
+| v2.2.0 | 2025-01-05 | 1. 删除游戏详细配置相关表（symbol_config、symbol_multiplier、symbol_special_property、reel_config、reel_symbol_weight、pay_table_config）<br>2. 详细配置已迁移至Nacos配置中心管理<br>3. game_config表新增nacos_config_id字段关联Nacos配置<br>4. 表数量从15个减少到9个 | - |
+| v2.1.0 | 2025-01-04 | 1. 新增Jackpot相关表：jackpot_config、jackpot_pool、jackpot_win_record<br>2. 采用混合池模式：Grand池全局共享（game_id="0"），Mini/Minor/Major各游戏独立<br>3. 表数量从12个增加到15个<br>4. 新增Jackpot缓存策略说明 | - |
 | v2.0.0 | 2025-01-03 | 1. 游戏配置表结构规范化重构<br>2. 将JSON字段拆分为独立表：symbol_config、symbol_multiplier、symbol_special_property、reel_config、reel_symbol_weight、pay_table_config<br>3. 新增5个关联表，减少数据冗余，提高数据一致性<br>4. 新增详细的表关系图和数据关联示例<br>5. 新增规范化设计优势说明和配置迁移建议 | - |
 | v1.1.0 | 2025-01-02 | 1. 删除game_records表，所有游戏记录迁移至ClickHouse<br>2. 新增symbol_config JSON字段详细结构说明<br>3. 新增Nacos配置中心架构设计建议<br>4. 更新表编号结构，表数量从7个减少到6个 | - |
 | v1.0.0 | 2025-01-01 | 初始版本发布 | - |

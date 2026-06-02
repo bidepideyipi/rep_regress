@@ -1,8 +1,10 @@
 -- MySQL数据库初始化脚本
 -- 数据库名称：slot_game_service
--- 版本：v2.0.0
--- 说明：游戏服务模块MySQL数据库表初始化脚本（规范化表结构版本）
+-- 版本：v2.2.0
+-- 说明：游戏服务模块MySQL数据库表初始化脚本
 -- 变更记录：
+--   v2.2.0: 删除游戏详细配置相关表，配置已迁移至Nacos；新增nacos_config_id字段
+--   v2.1.0: 新增Jackpot相关表（jackpot_config、jackpot_pool、jackpot_win_record），采用混合池模式
 --   v2.0.0: 数据库结构规范化重构，将游戏配置JSON字段拆分为多个关联表
 --   v1.0.1: 删除game_records表，所有游戏记录数据存储在ClickHouse中
 --   v1.0.0: 初始版本
@@ -49,7 +51,7 @@ CREATE TABLE integrator_config (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='集成商配置表';
 
 -- ============================================
--- 2.2.0 游戏配置主表 (game_config) - 基础配置
+-- 2.2 游戏配置表 (game_config)
 -- ============================================
 DROP TABLE IF EXISTS game_config;
 
@@ -66,144 +68,24 @@ CREATE TABLE game_config (
     rtp_target DECIMAL(5,2) NOT NULL DEFAULT 95.00 COMMENT '目标RTP值',
     volatility_level VARCHAR(16) NOT NULL DEFAULT 'medium' COMMENT '波动性等级（low/medium/high）',
     special_features JSON DEFAULT NULL COMMENT '特殊功能配置（保留JSON格式）',
+    nacos_config_id VARCHAR(64) NOT NULL COMMENT 'Nacos配置ID（关联详细配置）',
     status TINYINT(1) NOT NULL DEFAULT 1 COMMENT '状态（0-禁用，1-启用）',
     version INT(11) NOT NULL DEFAULT 1 COMMENT '配置版本号',
     remark TEXT DEFAULT NULL COMMENT '备注',
     create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    
+
     PRIMARY KEY (game_id),
     KEY idx_status (status),
     KEY idx_game_type (game_type),
+    KEY idx_nacos_config (nacos_config_id),
     KEY idx_version (version),
     CONSTRAINT chk_game_status CHECK (status IN (0, 1)),
     CONSTRAINT chk_min_bet CHECK (min_bet > 0),
     CONSTRAINT chk_max_bet CHECK (max_bet >= min_bet),
     CONSTRAINT chk_reel_count CHECK (reel_count BETWEEN 1 AND 10),
     CONSTRAINT chk_symbol_count CHECK (symbol_count BETWEEN 1 AND 20)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='游戏配置主表';
-
--- ============================================
--- 2.2.1 符号配置表 (symbol_config)
--- ============================================
-DROP TABLE IF EXISTS symbol_config;
-
-CREATE TABLE symbol_config (
-    id BIGINT(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    game_id VARCHAR(32) NOT NULL COMMENT '关联游戏ID',
-    symbol_id VARCHAR(32) NOT NULL COMMENT '符号ID（英文，如cherry）',
-    symbol_name VARCHAR(64) NOT NULL COMMENT '符号名称（英文，如cherry）',
-    symbol_type VARCHAR(16) NOT NULL DEFAULT 'normal' COMMENT '符号类型：normal、wild、scatter',
-    description VARCHAR(256) DEFAULT NULL COMMENT '符号描述',
-    is_active TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用（0-否，1-是）',
-    sort_order INT(11) NOT NULL DEFAULT 0 COMMENT '排序顺序',
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_game_symbol (game_id, symbol_id),
-    KEY idx_symbol_type (symbol_type),
-    KEY idx_sort_order (sort_order),
-    CONSTRAINT fk_symbol_game_id FOREIGN KEY (game_id) REFERENCES game_config (game_id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_symbol_type CHECK (symbol_type IN ('normal', 'wild', 'scatter')),
-    CONSTRAINT chk_is_active CHECK (is_active IN (0, 1))
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='符号配置表';
-
--- ============================================
--- 2.2.2 符号赔付倍数表 (symbol_multiplier)
--- ============================================
-DROP TABLE IF EXISTS symbol_multiplier;
-
-CREATE TABLE symbol_multiplier (
-    id BIGINT(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    symbol_config_id BIGINT(20) NOT NULL COMMENT '关联符号配置ID',
-    match_count INT(11) NOT NULL COMMENT '连击数（如2、3、4、5）',
-    multiplier DECIMAL(10,2) NOT NULL DEFAULT 0.00 COMMENT '赔付倍数',
-    is_bet_line TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否需要匹配下注线（0-否，1-是）',
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_symbol_match (symbol_config_id, match_count),
-    KEY idx_multiplier (multiplier),
-    CONSTRAINT fk_symbol_config_id FOREIGN KEY (symbol_config_id) REFERENCES symbol_config (id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_match_count CHECK (match_count BETWEEN 1 AND 10),
-    CONSTRAINT chk_multiplier CHECK (multiplier > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='符号赔付倍数表';
-
--- ============================================
--- 2.2.3 符号特殊属性表 (symbol_special_property)
--- ============================================
-DROP TABLE IF EXISTS symbol_special_property;
-
-CREATE TABLE symbol_special_property (
-    id BIGINT(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    symbol_config_id BIGINT(20) NOT NULL COMMENT '关联符号配置ID',
-    property_name VARCHAR(32) NOT NULL COMMENT '属性名称：substitute、free_spins、any_position等',
-    property_value VARCHAR(256) NOT NULL COMMENT '属性值（JSON字符串或具体值）',
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_symbol_property (symbol_config_id, property_name),
-    KEY idx_property_name (property_name),
-    CONSTRAINT fk_symbol_special_property_config_id FOREIGN KEY (symbol_config_id) REFERENCES symbol_config (id) ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='符号特殊属性表';
-
--- ============================================
--- 2.2.4 卷轴配置表 (reel_config)
--- ============================================
-DROP TABLE IF EXISTS reel_config;
-
-CREATE TABLE reel_config (
-    id BIGINT(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    game_id VARCHAR(32) NOT NULL COMMENT '关联游戏ID',
-    reel_index INT(11) NOT NULL COMMENT '卷轴索引（1,2,3,4,5）',
-    reel_name VARCHAR(32) NOT NULL COMMENT '卷轴名称（如reel1, reel2）',
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_game_reel (game_id, reel_index),
-    CONSTRAINT fk_reel_game_id FOREIGN KEY (game_id) REFERENCES game_config (game_id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_reel_index CHECK (reel_index BETWEEN 1 AND 10)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='卷轴配置表';
-
--- ============================================
--- 2.2.5 卷轴符号权重表 (reel_symbol_weight)
--- ============================================
-DROP TABLE IF EXISTS reel_symbol_weight;
-
-CREATE TABLE reel_symbol_weight (
-    id BIGINT(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    reel_config_id BIGINT(20) NOT NULL COMMENT '关联卷轴配置ID',
-    symbol_config_id BIGINT(20) NOT NULL COMMENT '关联符号配置ID',
-    weight INT(11) NOT NULL DEFAULT 0 COMMENT '符号权重（权重越大出现概率越高）',
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_reel_symbol (reel_config_id, symbol_config_id),
-    KEY idx_weight (weight),
-    CONSTRAINT fk_reel_config_id FOREIGN KEY (reel_config_id) REFERENCES reel_config (id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT fk_reel_symbol_config_id FOREIGN KEY (symbol_config_id) REFERENCES symbol_config (id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_weight CHECK (weight >= 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='卷轴符号权重表';
-
--- ============================================
--- 2.2.6 赔付表配置表 (pay_table_config)
--- ============================================
-DROP TABLE IF EXISTS pay_table_config;
-
-CREATE TABLE pay_table_config (
-    id BIGINT(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键',
-    game_id VARCHAR(32) NOT NULL COMMENT '关联游戏ID',
-    pay_line_count INT(11) NOT NULL DEFAULT 20 COMMENT '赔付线数量',
-    pay_line_pattern JSON DEFAULT NULL COMMENT '赔付线模式配置',
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    
-    PRIMARY KEY (id),
-    UNIQUE KEY uk_game_paytable (game_id),
-    CONSTRAINT fk_pay_table_game_id FOREIGN KEY (game_id) REFERENCES game_config (game_id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_pay_line_count CHECK (pay_line_count BETWEEN 1 AND 100)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='赔付表配置表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='游戏配置表（详细配置在Nacos）';
 
 -- ============================================
 -- 2.3 用户信息表 (user_info)
@@ -349,6 +231,80 @@ CREATE TABLE game_config_version (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='游戏配置版本表';
 
 -- ============================================
+-- 2.7 Jackpot配置表 (jackpot_config)
+-- ============================================
+DROP TABLE IF EXISTS jackpot_config;
+
+CREATE TABLE jackpot_config (
+    game_id VARCHAR(32) NOT NULL COMMENT '游戏ID（"0"表示全局配置）',
+    enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用（0-否，1-是）',
+    contribution_rate DECIMAL(5,4) NOT NULL DEFAULT 0.0100 COMMENT '注入比例（1%）',
+    mini_seed DECIMAL(18,2) NOT NULL DEFAULT 100.00 COMMENT 'Mini池种子金额',
+    minor_seed DECIMAL(18,2) NOT NULL DEFAULT 500.00 COMMENT 'Minor池种子金额',
+    major_seed DECIMAL(18,2) NOT NULL DEFAULT 2000.00 COMMENT 'Major池种子金额',
+    grand_seed DECIMAL(18,2) NOT NULL DEFAULT 10000.00 COMMENT 'Grand池种子金额',
+    mini_ratio DECIMAL(4,3) NOT NULL DEFAULT 0.300 COMMENT 'Mini池分配比例（30%）',
+    minor_ratio DECIMAL(4,3) NOT NULL DEFAULT 0.250 COMMENT 'Minor池分配比例（25%）',
+    major_ratio DECIMAL(4,3) NOT NULL DEFAULT 0.250 COMMENT 'Major池分配比例（25%）',
+    grand_ratio DECIMAL(4,3) NOT NULL DEFAULT 0.200 COMMENT 'Grand池分配比例（20%）',
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    PRIMARY KEY (game_id),
+    KEY idx_enabled (enabled),
+    CONSTRAINT chk_jackpot_enabled CHECK (enabled IN (0, 1)),
+    CONSTRAINT chk_jackpot_ratios CHECK (mini_ratio + minor_ratio + major_ratio + grand_ratio = 1.0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Jackpot配置表';
+
+-- ============================================
+-- 2.8 Jackpot实时池表 (jackpot_pool)
+-- ============================================
+DROP TABLE IF EXISTS jackpot_pool;
+
+CREATE TABLE jackpot_pool (
+    game_id VARCHAR(32) NOT NULL COMMENT '游戏ID（"0"表示全局共享池）',
+    pool_type VARCHAR(16) NOT NULL COMMENT '池子类型（mini/minor/major/grand）',
+    current_amount DECIMAL(18,2) NOT NULL DEFAULT 0.00 COMMENT '当前金额',
+    last_win_time DATETIME DEFAULT NULL COMMENT '最后中奖时间',
+    win_count BIGINT(20) NOT NULL DEFAULT 0 COMMENT '中奖次数',
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+
+    PRIMARY KEY (game_id, pool_type),
+    KEY idx_pool_type (pool_type),
+    KEY idx_last_win_time (last_win_time),
+    CONSTRAINT chk_jackpot_pool_type CHECK (pool_type IN ('mini', 'minor', 'major', 'grand')),
+    CONSTRAINT chk_jackpot_amount CHECK (current_amount >= 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Jackpot实时池表';
+
+-- ============================================
+-- 2.9 Jackpot中奖记录表 (jackpot_win_record)
+-- ============================================
+DROP TABLE IF EXISTS jackpot_win_record;
+
+CREATE TABLE jackpot_win_record (
+    transaction_id VARCHAR(64) NOT NULL COMMENT '交易ID',
+    integrator_id VARCHAR(32) NOT NULL COMMENT '集成商ID',
+    user_id VARCHAR(32) NOT NULL COMMENT '用户ID',
+    game_id VARCHAR(32) NOT NULL COMMENT '游戏ID',
+    pool_type VARCHAR(16) NOT NULL COMMENT '中奖池子类型',
+    win_amount DECIMAL(18,2) NOT NULL COMMENT '中奖金额',
+    pool_amount_before DECIMAL(18,2) NOT NULL COMMENT '中奖前池金额',
+    pool_amount_after DECIMAL(18,2) NOT NULL COMMENT '中奖后池金额（重置为种子金额）',
+    session_id VARCHAR(64) DEFAULT NULL COMMENT '游戏会话ID',
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+
+    PRIMARY KEY (transaction_id),
+    KEY idx_user_id (user_id),
+    KEY idx_game_id (game_id),
+    KEY idx_pool_type (pool_type),
+    KEY idx_create_time (create_time),
+    CONSTRAINT fk_jackpot_integrator FOREIGN KEY (integrator_id) REFERENCES integrator_config (integrator_id) ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT chk_jackpot_win_pool_type CHECK (pool_type IN ('mini', 'minor', 'major', 'grand')),
+    CONSTRAINT chk_jackpot_win_amount CHECK (win_amount > 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Jackpot中奖记录表';
+
+-- ============================================
 -- 创建索引优化查询性能
 -- ============================================
 
@@ -371,67 +327,9 @@ INSERT INTO integrator_config (integrator_id, integrator_name, company_name, con
 -- 插入示例游戏配置数据 - Lucky Fruits 3x3 slot
 -- ============================================
 
--- 插入游戏配置主表数据
-INSERT INTO game_config (game_id, game_name, game_type, reel_count, symbol_count, min_bet, max_bet, min_lines, max_lines, rtp_target, volatility_level, status) VALUES
-('game_001', 'Lucky Fruits', 'slot_3x3', 3, 10, 0.10, 1000.00, 1, 20, 95.00, 'medium', 1);
-
--- 插入符号配置数据
-INSERT INTO symbol_config (game_id, symbol_id, symbol_name, symbol_type, sort_order, is_active) VALUES
-('game_001', 'cherry', 'cherry', 'normal', 1, 1),
-('game_001', 'lemon', 'lemon', 'normal', 2, 1),
-('game_001', 'orange', 'orange', 'normal', 3, 1),
-('game_001', 'plum', 'plum', 'normal', 4, 1),
-('game_001', 'grape', 'grape', 'normal', 5, 1),
-('game_001', 'watermelon', 'watermelon', 'normal', 6, 1),
-('game_001', 'bell', 'bell', 'normal', 7, 1),
-('game_001', 'seven', 'seven', 'normal', 8, 1),
-('game_001', 'wild', 'wild', 'wild', 9, 1),
-('game_001', 'scatter', 'scatter', 'scatter', 10, 1);
-
--- 插入符号赔付倍数数据
-INSERT INTO symbol_multiplier (symbol_config_id, match_count, multiplier, is_bet_line) VALUES
-(1, 2, 3, 0), (1, 3, 10, 1),
-(2, 2, 5, 0), (2, 3, 15, 1),
-(3, 2, 8, 0), (3, 3, 20, 1),
-(4, 2, 10, 0), (4, 3, 25, 1),
-(5, 2, 12, 0), (5, 3, 30, 1),
-(6, 2, 15, 0), (6, 3, 40, 1),
-(7, 2, 20, 0), (7, 3, 50, 1),
-(8, 2, 40, 0), (8, 3, 100, 1),
-(9, 2, 80, 0), (9, 3, 200, 1),
-(10, 3, 50, 0);
-
--- 插入符号特殊属性数据
-INSERT INTO symbol_special_property (symbol_config_id, property_name, property_value) VALUES
-(10, 'free_spins', '10'),
-(10, 'any_position', 'true'),
-(9, 'substitute', 'normal');
-
--- 插入卷轴配置数据
-INSERT INTO reel_config (game_id, reel_index, reel_name) VALUES
-('game_001', 1, 'reel1'),
-('game_001', 2, 'reel2'),
-('game_001', 3, 'reel3');
-
--- 插入卷轴符号权重数据
--- Reel 1 权重配置
-INSERT INTO reel_symbol_weight (reel_config_id, symbol_config_id, weight) VALUES
-(1, 1, 25), (1, 2, 20), (1, 3, 18), (1, 4, 15), (1, 5, 12),
-(1, 6, 8), (1, 7, 6), (1, 8, 4), (1, 9, 2), (1, 10, 1);
-
--- Reel 2 权重配置
-INSERT INTO reel_symbol_weight (reel_config_id, symbol_config_id, weight) VALUES
-(2, 1, 25), (2, 2, 20), (2, 3, 18), (2, 4, 15), (2, 5, 12),
-(2, 6, 8), (2, 7, 6), (2, 8, 4), (2, 9, 2), (2, 10, 1);
-
--- Reel 3 权重配置
-INSERT INTO reel_symbol_weight (reel_config_id, symbol_config_id, weight) VALUES
-(3, 1, 25), (3, 2, 20), (3, 3, 18), (3, 4, 15), (3, 5, 12),
-(3, 6, 8), (3, 7, 6), (3, 8, 4), (3, 9, 2), (3, 10, 1);
-
--- 插入赔付表配置数据
-INSERT INTO pay_table_config (game_id, pay_line_count, pay_line_pattern) VALUES
-('game_001', 20, '[[0,0],[0,1],[0,2]]');
+-- 插入游戏配置数据（详细配置在Nacos）
+INSERT INTO game_config (game_id, game_name, game_type, reel_count, symbol_count, min_bet, max_bet, min_lines, max_lines, rtp_target, volatility_level, nacos_config_id, status) VALUES
+('game_001', 'Lucky Fruits', 'slot_3x3', 3, 10, 0.10, 1000.00, 1, 20, 95.00, 'medium', 'nacos_game_config_001', 1);
 
 -- 插入示例用户数据
 INSERT INTO user_info (user_id, integrator_id, user_name, nickname, email, password_hash, rtp_tolerance_threshold, balance, status) VALUES
@@ -449,6 +347,28 @@ INSERT INTO user_finance_stats (user_id, total_bet, total_win, total_games, net_
 ('platform_user_001', 0.00, 0.00, 0, 0.00, 0.00, 0.00),
 ('strict_user_001', 0.00, 0.00, 0, 0.00, 0.00, 0.00),
 ('normal_user_001', 0.00, 0.00, 0, 0.00, 0.00, 0.00);
+
+-- ============================================
+-- 插入Jackpot初始化数据
+-- ============================================
+
+-- 插入全局Jackpot配置（game_id="0"表示全局配置）
+INSERT INTO jackpot_config (game_id, enabled, contribution_rate, mini_seed, minor_seed, major_seed, grand_seed, mini_ratio, minor_ratio, major_ratio, grand_ratio) VALUES
+('0', 1, 0.0100, 100.00, 500.00, 2000.00, 10000.00, 0.300, 0.250, 0.250, 0.200);
+
+-- 插入游戏001的Jackpot配置
+INSERT INTO jackpot_config (game_id, enabled, contribution_rate, mini_seed, minor_seed, major_seed, grand_seed, mini_ratio, minor_ratio, major_ratio, grand_ratio) VALUES
+('game_001', 1, 0.0100, 100.00, 500.00, 2000.00, 10000.00, 0.300, 0.250, 0.250, 0.200);
+
+-- 插入全局共享Grand池
+INSERT INTO jackpot_pool (game_id, pool_type, current_amount, last_win_time, win_count) VALUES
+('0', 'grand', 10000.00, NULL, 0);
+
+-- 插入游戏001的Mini/Minor/Major池
+INSERT INTO jackpot_pool (game_id, pool_type, current_amount, last_win_time, win_count) VALUES
+('game_001', 'mini', 100.00, NULL, 0),
+('game_001', 'minor', 500.00, NULL, 0),
+('game_001', 'major', 2000.00, NULL, 0);
 
 -- ============================================
 -- 创建视图优化查询
@@ -552,7 +472,7 @@ CREATE PROCEDURE create_game_config_version(
 )
 BEGIN
     INSERT INTO game_config_version (game_id, version, config_snapshot, change_reason, operator)
-    SELECT 
+    SELECT
         p_game_id,
         p_version,
         JSON_OBJECT(
@@ -567,73 +487,14 @@ BEGIN
             'rtp_target', rtp_target,
             'volatility_level', volatility_level,
             'special_features', special_features,
-            'symbols', (
-                SELECT JSON_ARRAYAGG(
-                    JSON_OBJECT(
-                        'symbol_id', s.symbol_id,
-                        'symbol_name', s.symbol_name,
-                        'symbol_type', s.symbol_type,
-                        'multipliers', (
-                            SELECT JSON_ARRAYAGG(
-                                JSON_OBJECT(
-                                    'match_count', m.match_count,
-                                    'multiplier', m.multiplier,
-                                    'is_bet_line', m.is_bet_line
-                                )
-                            )
-                            FROM symbol_multiplier m
-                            WHERE m.symbol_config_id = s.id
-                        ),
-                        'properties', (
-                            SELECT JSON_ARRAYAGG(
-                                JSON_OBJECT(
-                                    'property_name', sp.property_name,
-                                    'property_value', sp.property_value
-                                )
-                            )
-                            FROM symbol_special_property sp
-                            WHERE sp.symbol_config_id = s.id
-                        )
-                    )
-                )
-                FROM symbol_config s
-                WHERE s.game_id = p_game_id
-            ),
-            'reels', (
-                SELECT JSON_ARRAYAGG(
-                    JSON_OBJECT(
-                        'reel_index', r.reel_index,
-                        'reel_name', r.reel_name,
-                        'weights', (
-                            SELECT JSON_ARRAYAGG(
-                                JSON_OBJECT(
-                                    'symbol_id', s2.symbol_id,
-                                    'weight', rsw.weight
-                                )
-                            )
-                            FROM reel_symbol_weight rsw
-                            JOIN symbol_config s2 ON rsw.symbol_config_id = s2.id
-                            WHERE rsw.reel_config_id = r.id
-                        )
-                    )
-                )
-                FROM reel_config r
-                WHERE r.game_id = p_game_id
-            ),
-            'pay_table', (
-                SELECT JSON_OBJECT(
-                    'pay_line_count', pt.pay_line_count,
-                    'pay_line_pattern', pt.pay_line_pattern
-                )
-                FROM pay_table_config pt
-                WHERE pt.game_id = p_game_id
-            )
+            'nacos_config_id', nacos_config_id,
+            'note', '详细配置（符号、卷轴、权重等）请查看Nacos配置中心'
         ),
         p_change_reason,
         p_operator
-    FROM game_config 
+    FROM game_config
     WHERE game_id = p_game_id;
-    
+
 END //
 
 DELIMITER ;
@@ -668,7 +529,8 @@ BEGIN
                 'rtp_target', NEW.rtp_target,
                 'volatility_level', NEW.volatility_level,
                 'special_features', NEW.special_features,
-                'note', '详细配置请查看相关关联表：symbol_config, symbol_multiplier, symbol_special_property, reel_config, reel_symbol_weight, pay_table_config'
+                'nacos_config_id', NEW.nacos_config_id,
+                'note', '详细配置（符号、卷轴、权重等）请查看Nacos配置中心'
             ),
             '配置更新',
             CURRENT_USER()
@@ -685,8 +547,8 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- ============================================
 SELECT 'MySQL数据库初始化脚本执行完成！' AS status;
 SELECT '数据库：slot_game_service' AS database_info;
-SELECT '表数量：12个（规范化表结构：1个游戏配置主表 + 6个关联表 + 5个业务表）' AS table_count;
+SELECT '表数量：9个（游戏详细配置在Nacos管理）' AS table_count;
 SELECT '视图数量：1个' AS view_count;
 SELECT '存储过程数量：2个' AS procedure_count;
 SELECT '触发器数量：1个' AS trigger_count;
-SELECT '数据库版本：v2.0.2（修复存储过程和触发器重复创建问题）' AS version_info;
+SELECT '数据库版本：v2.2.0（删除游戏详细配置表，配置迁移至Nacos）' AS version_info;
