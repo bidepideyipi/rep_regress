@@ -38,10 +38,11 @@
 | 2.6 | user_session | 用户会话表 | 存储用户游戏会话信息 |
 | 2.7 | jackpot_config | Jackpot配置表 | 存储Jackpot基础配置信息 |
 | 2.8 | jackpot_pool | Jackpot实时池表 | 存储Jackpot奖池实时金额（game_id="0"表示全局共享池） |
-| 2.9 | jackpot_win_record | Jackpot中奖记录表 | 存储Jackpot中奖记录 |
 
-**表数量统计**：核心业务表9个，其中用户相关表2个（user_info含余额，user_finance_stats含统计），Jackpot相关表3个<br>
-**说明**：游戏详细配置（符号、卷轴、权重、赔付表等）已在Nacos配置中心管理
+**表数量统计**：核心业务表8个，其中用户相关表2个（user_info含余额，user_finance_stats含统计），Jackpot相关表2个<br>
+**说明**：
+- 游戏详细配置（符号、卷轴、权重、赔付表等）已在Nacos配置中心管理
+- Jackpot中奖记录写入ClickHouse，通过聚合查询统计
 
 ---
 
@@ -498,66 +499,26 @@
 
 #### 2.8.5 设计说明
 
-**混合池模式：**
-- **Mini/Minor/Major池**：各游戏独立（game_id为具体游戏ID）
-- **Grand池**：全局共享（game_id="0"），所有游戏共同注入
+**混合池模式规则：**
+- **全局池 (game_id="0")**：仅 Grand 池，所有游戏共享
+- **游戏独立池**：当 game_id 在 jackpot_config 中存在且 enabled=1 时，创建该游戏的 Mini/Minor/Major 池
+
+**判断逻辑：**
+```
+if jackpot_config 中存在 game_id 且 enabled=1:
+    该游戏使用独立池 (mini/minor/major)
+else:
+    该游戏仅使用全局池 (game_id="0" 的 grand)
+```
 
 **Redis Key设计：**
 ```
 jackpot:{game_id}:{pool_type}:amount → DECIMAL
 
 # 示例：
-# jackpot:0:grand:amount     # 共享Grand池
-# jackpot:game_a:mini:amount  # 游戏A的Mini池
+# jackpot:0:grand:amount     # 全局Grand池
+# jackpot:game_a:mini:amount  # 游戏A独立Mini池（如果配置且enabled=1）
 ```
-
----
-
-### 2.9 Jackpot中奖记录表 (jackpot_win_record)
-
-#### 2.9.1 表基本信息
-
-| 项目 | 内容 |
-|------|------|
-| 表名 | jackpot_win_record |
-| 中文名 | Jackpot中奖记录表 |
-| 用途 | 存储Jackpot中奖记录，支持审计和统计 |
-| 存储引擎 | InnoDB |
-| 字符集 | utf8mb4 |
-
-#### 2.9.2 字段设计
-
-| 字段名 | 类型 | 长度 | 允许NULL | 默认值 | 主键 | 说明 |
-|--------|------|------|----------|--------|------|------|
-| transaction_id | VARCHAR | 64 | NO | - | YES | 交易ID |
-| integrator_id | VARCHAR | 32 | NO | - | NO | 集成商ID |
-| user_id | VARCHAR | 32 | NO | - | NO | 用户ID |
-| game_id | VARCHAR | 32 | NO | - | NO | 游戏ID |
-| pool_type | VARCHAR | 16 | NO | - | NO | 中奖池子类型 |
-| win_amount | DECIMAL | 18,2 | NO | - | NO | 中奖金额 |
-| pool_amount_before | DECIMAL | 18,2 | NO | - | NO | 中奖前池金额 |
-| pool_amount_after | DECIMAL | 18,2 | NO | - | NO | 中奖后池金额（重置为种子金额） |
-| session_id | VARCHAR | 64 | YES | NULL | NO | 游戏会话ID |
-| create_time | DATETIME | - | NO | CURRENT_TIMESTAMP | NO | 创建时间 |
-
-#### 2.9.3 索引设计
-
-| 索引名称 | 索引类型 | 索引字段 | 索引方法 | 说明 |
-|----------|----------|----------|----------|------|
-| PRIMARY | 主键索引 | transaction_id | - | 主键索引 |
-| idx_user_id | 普通索引 | user_id | BTREE | 用户ID查询索引 |
-| idx_game_id | 普通索引 | game_id | BTREE | 游戏ID查询索引 |
-| idx_pool_type | 普通索引 | pool_type | BTREE | 池子类型查询索引 |
-| idx_create_time | 普通索引 | create_time | BTREE | 创建时间查询索引 |
-
-#### 2.9.4 约束条件
-
-| 约束类型 | 约束名称 | 约束字段 | 约束说明 |
-|----------|----------|----------|----------|
-| PRIMARY KEY | pk_jackpot_win_record | transaction_id | 主键约束 |
-| FOREIGN KEY | fk_jackpot_integrator | integrator_id | 外键约束关联integrator_config表 |
-| CHECK | chk_pool_type | pool_type | 池子类型检查约束 |
-| CHECK | chk_win_amount | win_amount | 中奖金额检查约束 |
 
 ---
 
@@ -643,8 +604,9 @@ jackpot:{game_id}:{pool_type}:amount → DECIMAL
 
 | 版本号 | 日期 | 修改内容 | 修改人 |
 |--------|------|----------|--------|
+| v2.3.0 | 2025-01-06 | 1. 删除jackpot_win_record表，中奖记录写入ClickHouse<br>2. 表数量从9个减少到8个 | - |
 | v2.2.0 | 2025-01-05 | 1. 删除游戏详细配置相关表（symbol_config、symbol_multiplier、symbol_special_property、reel_config、reel_symbol_weight、pay_table_config）<br>2. 详细配置已迁移至Nacos配置中心管理<br>3. game_config表新增nacos_config_id字段关联Nacos配置<br>4. 表数量从15个减少到9个 | - |
-| v2.1.0 | 2025-01-04 | 1. 新增Jackpot相关表：jackpot_config、jackpot_pool、jackpot_win_record<br>2. 采用混合池模式：Grand池全局共享（game_id="0"），Mini/Minor/Major各游戏独立<br>3. 表数量从12个增加到15个<br>4. 新增Jackpot缓存策略说明 | - |
+| v2.1.0 | 2025-01-04 | 1. 新增Jackpot相关表：jackpot_config、jackpot_pool<br>2. 采用混合池模式：Grand池全局共享（game_id="0"），Mini/Minor/Major各游戏独立<br>3. 表数量从12个增加到15个<br>4. 新增Jackpot缓存策略说明 | - |
 | v2.0.0 | 2025-01-03 | 1. 游戏配置表结构规范化重构<br>2. 将JSON字段拆分为独立表：symbol_config、symbol_multiplier、symbol_special_property、reel_config、reel_symbol_weight、pay_table_config<br>3. 新增5个关联表，减少数据冗余，提高数据一致性<br>4. 新增详细的表关系图和数据关联示例<br>5. 新增规范化设计优势说明和配置迁移建议 | - |
 | v1.1.0 | 2025-01-02 | 1. 删除game_records表，所有游戏记录迁移至ClickHouse<br>2. 新增symbol_config JSON字段详细结构说明<br>3. 新增Nacos配置中心架构设计建议<br>4. 更新表编号结构，表数量从7个减少到6个 | - |
 | v1.0.0 | 2025-01-01 | 初始版本发布 | - |

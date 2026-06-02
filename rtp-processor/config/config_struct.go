@@ -20,6 +20,13 @@ type Config struct {
 			BatchSize int    `json:"batch_size"`
 		} `json:"consumer"`
 	} `json:"rocket_mq"`
+	MySQL struct {
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Database string `json:"database"`
+	} `json:"mysql"`
 	AggregateUserInterval string `json:"aggregate_user_interval"`
 	AggregateGameInterval string `json:"aggregate_game_interval"`
 	AlertInterval         string `json:"alert_interval"`

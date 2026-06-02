@@ -1,10 +1,11 @@
 -- MySQL数据库初始化脚本
 -- 数据库名称：slot_game_service
--- 版本：v2.2.0
+-- 版本：v2.3.0
 -- 说明：游戏服务模块MySQL数据库表初始化脚本
 -- 变更记录：
+--   v2.3.0: 删除jackpot_win_record表，中奖记录写入ClickHouse
 --   v2.2.0: 删除游戏详细配置相关表，配置已迁移至Nacos；新增nacos_config_id字段
---   v2.1.0: 新增Jackpot相关表（jackpot_config、jackpot_pool、jackpot_win_record），采用混合池模式
+--   v2.1.0: 新增Jackpot相关表（jackpot_config、jackpot_pool），采用混合池模式
 --   v2.0.0: 数据库结构规范化重构，将游戏配置JSON字段拆分为多个关联表
 --   v1.0.1: 删除game_records表，所有游戏记录数据存储在ClickHouse中
 --   v1.0.0: 初始版本
@@ -278,33 +279,6 @@ CREATE TABLE jackpot_pool (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Jackpot实时池表';
 
 -- ============================================
--- 2.9 Jackpot中奖记录表 (jackpot_win_record)
--- ============================================
-DROP TABLE IF EXISTS jackpot_win_record;
-
-CREATE TABLE jackpot_win_record (
-    transaction_id VARCHAR(64) NOT NULL COMMENT '交易ID',
-    integrator_id VARCHAR(32) NOT NULL COMMENT '集成商ID',
-    user_id VARCHAR(32) NOT NULL COMMENT '用户ID',
-    game_id VARCHAR(32) NOT NULL COMMENT '游戏ID',
-    pool_type VARCHAR(16) NOT NULL COMMENT '中奖池子类型',
-    win_amount DECIMAL(18,2) NOT NULL COMMENT '中奖金额',
-    pool_amount_before DECIMAL(18,2) NOT NULL COMMENT '中奖前池金额',
-    pool_amount_after DECIMAL(18,2) NOT NULL COMMENT '中奖后池金额（重置为种子金额）',
-    session_id VARCHAR(64) DEFAULT NULL COMMENT '游戏会话ID',
-    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-
-    PRIMARY KEY (transaction_id),
-    KEY idx_user_id (user_id),
-    KEY idx_game_id (game_id),
-    KEY idx_pool_type (pool_type),
-    KEY idx_create_time (create_time),
-    CONSTRAINT fk_jackpot_integrator FOREIGN KEY (integrator_id) REFERENCES integrator_config (integrator_id) ON DELETE RESTRICT ON UPDATE CASCADE,
-    CONSTRAINT chk_jackpot_win_pool_type CHECK (pool_type IN ('mini', 'minor', 'major', 'grand')),
-    CONSTRAINT chk_jackpot_win_amount CHECK (win_amount > 0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Jackpot中奖记录表';
-
--- ============================================
 -- 创建索引优化查询性能
 -- ============================================
 
@@ -351,21 +325,28 @@ INSERT INTO user_finance_stats (user_id, total_bet, total_win, total_games, net_
 -- ============================================
 -- 插入Jackpot初始化数据
 -- ============================================
+-- 规则：
+--   1. 全局池 (game_id="0"): 仅 Grand 池，所有游戏共享
+--   2. 游戏独立池: 当 game_id 在 jackpot_config 中存在且 enabled=1 时，创建 Mini/Minor/Major 池
 
--- 插入全局Jackpot配置（game_id="0"表示全局配置）
+-- 插入全局Jackpot配置（game_id="0"表示全局配置，仅用于Grand池）
 INSERT INTO jackpot_config (game_id, enabled, contribution_rate, mini_seed, minor_seed, major_seed, grand_seed, mini_ratio, minor_ratio, major_ratio, grand_ratio) VALUES
 ('0', 1, 0.0100, 100.00, 500.00, 2000.00, 10000.00, 0.300, 0.250, 0.250, 0.200);
 
--- 插入游戏001的Jackpot配置
+-- 插入游戏001的Jackpot配置（enabled=1，将创建独立Mini/Minor/Major池）
 INSERT INTO jackpot_config (game_id, enabled, contribution_rate, mini_seed, minor_seed, major_seed, grand_seed, mini_ratio, minor_ratio, major_ratio, grand_ratio) VALUES
 ('game_001', 1, 0.0100, 100.00, 500.00, 2000.00, 10000.00, 0.300, 0.250, 0.250, 0.200);
 
 -- 插入全局共享Grand池
 INSERT INTO jackpot_pool (game_id, pool_type, current_amount, last_win_time, win_count) VALUES
-('0', 'grand', 10000.00, NULL, 0);
+('0', 'grand', 10000.00, NULL, 0),
+('0', 'mini', 100.00, NULL, 0),
+('0', 'minor', 500.00, NULL, 0),
+('0', 'major', 2000.00, NULL, 0);
 
--- 插入游戏001的Mini/Minor/Major池
+-- 插入游戏001的Mini/Minor/Major池（因为game_001在jackpot_config中enabled=1）
 INSERT INTO jackpot_pool (game_id, pool_type, current_amount, last_win_time, win_count) VALUES
+('game_001', 'grand', 10000.00, NULL, 0),
 ('game_001', 'mini', 100.00, NULL, 0),
 ('game_001', 'minor', 500.00, NULL, 0),
 ('game_001', 'major', 2000.00, NULL, 0);
@@ -547,8 +528,8 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- ============================================
 SELECT 'MySQL数据库初始化脚本执行完成！' AS status;
 SELECT '数据库：slot_game_service' AS database_info;
-SELECT '表数量：9个（游戏详细配置在Nacos管理）' AS table_count;
+SELECT '表数量：8个（游戏详细配置在Nacos管理，Jackpot中奖记录在ClickHouse）' AS table_count;
 SELECT '视图数量：1个' AS view_count;
 SELECT '存储过程数量：2个' AS procedure_count;
 SELECT '触发器数量：1个' AS trigger_count;
-SELECT '数据库版本：v2.2.0（删除游戏详细配置表，配置迁移至Nacos）' AS version_info;
+SELECT '数据库版本：v2.3.0（删除jackpot_win_record表，中奖记录写入ClickHouse）' AS version_info;

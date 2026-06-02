@@ -37,3 +37,13 @@ type GameLogDetail struct {
 	UserAgent       string          `ch:"user_agent" json:"user_agent"`
 	LogTime         time.Time       `ch:"log_time" json:"log_time"`
 }
+
+// GetGameID 实现 BetLog 接口
+func (g *GameLogDetail) GetGameID() string {
+	return g.GameID
+}
+
+// GetBetAmount 实现 BetLog 接口
+func (g *GameLogDetail) GetBetAmount() decimal.Decimal {
+	return g.BetAmount
+}

@@ -45,12 +45,104 @@ func LoadConfigFromNacos(nacosServerAddr, namespace, group, dataId string) (*Con
 		return nil, fmt.Errorf("从 Nacos 获取配置失败: %v", err)
 	}
 
-	var cfg Config
-	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
+	// 先解析为 map[string]interface{} 以支持多种数据类型
+	var rawCfg map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &rawCfg); err != nil {
 		return nil, fmt.Errorf("解析 Nacos 配置失败: %v", err)
 	}
 
-	return &cfg, nil
+	cfg := &Config{}
+
+	// 解析 ClickHouse 配置
+	if ch, ok := rawCfg["clickhouse"].(map[string]interface{}); ok {
+		if host, ok := ch["host"].(string); ok {
+			cfg.ClickHouse.Host = host
+		}
+		cfg.ClickHouse.Port = parseInt(ch["port"])
+		if username, ok := ch["username"].(string); ok {
+			cfg.ClickHouse.Username = username
+		}
+		if password, ok := ch["password"].(string); ok {
+			cfg.ClickHouse.Password = password
+		}
+		if database, ok := ch["database"].(string); ok {
+			cfg.ClickHouse.Database = database
+		}
+	}
+
+	// 解析 MySQL 配置
+	if mysql, ok := rawCfg["mysql"].(map[string]interface{}); ok {
+		if host, ok := mysql["host"].(string); ok {
+			cfg.MySQL.Host = host
+		}
+		cfg.MySQL.Port = parseInt(mysql["port"])
+		if username, ok := mysql["username"].(string); ok {
+			cfg.MySQL.Username = username
+		}
+		if password, ok := mysql["password"].(string); ok {
+			cfg.MySQL.Password = password
+		}
+		if database, ok := mysql["database"].(string); ok {
+			cfg.MySQL.Database = database
+		}
+	}
+
+	// 解析 RocketMQ 配置
+	if rmq, ok := rawCfg["rocket_mq"].(map[string]interface{}); ok {
+		if nameServers, ok := rmq["name_servers"].([]interface{}); ok {
+			for _, ns := range nameServers {
+				if nsStr, ok := ns.(string); ok {
+					cfg.RocketMQ.NameServers = append(cfg.RocketMQ.NameServers, nsStr)
+				}
+			}
+		}
+		if producer, ok := rmq["producer"].(map[string]interface{}); ok {
+			if groupName, ok := producer["group_name"].(string); ok {
+				cfg.RocketMQ.Producer.GroupName = groupName
+			}
+			if topic, ok := producer["topic"].(string); ok {
+				cfg.RocketMQ.Producer.Topic = topic
+			}
+		}
+		if consumer, ok := rmq["consumer"].(map[string]interface{}); ok {
+			if groupName, ok := consumer["group_name"].(string); ok {
+				cfg.RocketMQ.Consumer.GroupName = groupName
+			}
+			if topic, ok := consumer["topic"].(string); ok {
+				cfg.RocketMQ.Consumer.Topic = topic
+			}
+			cfg.RocketMQ.Consumer.BatchSize = parseInt(consumer["batch_size"])
+		}
+	}
+
+	// 解析聚合间隔配置
+	if interval, ok := rawCfg["aggregate_user_interval"].(string); ok {
+		cfg.AggregateUserInterval = interval
+	}
+	if interval, ok := rawCfg["aggregate_game_interval"].(string); ok {
+		cfg.AggregateGameInterval = interval
+	}
+	if interval, ok := rawCfg["alert_interval"].(string); ok {
+		cfg.AlertInterval = interval
+	}
+
+	return cfg, nil
+}
+
+// parseInt 从 interface{} 中解析 int，支持 float64 和 string 类型
+func parseInt(v interface{}) int {
+	switch val := v.(type) {
+	case float64:
+		return int(val)
+	case int:
+		return val
+	case string:
+		var i int
+		fmt.Sscanf(val, "%d", &i)
+		return i
+	default:
+		return 0
+	}
 }
 
 /**

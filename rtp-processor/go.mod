@@ -1,14 +1,17 @@
 module github.com/rtp-processor
 
-go 1.21
+go 1.24.0
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.22.0
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
+	github.com/go-sql-driver/mysql v1.10.0
 	github.com/nacos-group/nacos-sdk-go/v2 v2.2.7
+	github.com/shopspring/decimal v1.3.1
 )
 
 require (
+	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/ClickHouse/ch-go v0.61.5 // indirect
 	github.com/alibabacloud-go/debug v0.0.0-20190504072949-9472017b5c68 // indirect
 	github.com/alibabacloud-go/tea v1.1.17 // indirect
@@ -41,7 +44,6 @@ require (
 	github.com/prometheus/common v0.32.1 // indirect
 	github.com/prometheus/procfs v0.7.3 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
-	github.com/shopspring/decimal v1.3.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/tidwall/gjson v1.13.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
