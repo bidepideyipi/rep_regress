@@ -39,3 +39,84 @@
   - 减少复杂度，便于理解和运营
 
   你觉得 单池、双池、四池 哪个更适合？或者有其他想法？
+
+  Jackpot 层级结构
+
+  ┌───────┬──────────┬──────────┬──────────┐
+  │ 层级  │ 初始金额 │ 触发概率 │ 分配比例 │
+  ├───────┼──────────┼──────────┼──────────┤
+  │ Mini  │ 100      │ 高       │ 30%      │
+  ├───────┼──────────┼──────────┼──────────┤
+  │ Minor │ 500      │ 中高     │ 25%      │
+  ├───────┼──────────┼──────────┼──────────┤
+  │ Major │ 2,000    │ 中       │ 25%      │
+  ├───────┼──────────┼──────────┼──────────┤
+  │ Grand │ 10,000   │ 低       │ 20%      │
+  └───────┴──────────┴──────────┴──────────┘
+
+  2. 触发机制
+
+  方案A：符号触发（推荐）
+  - 5 个 Wild 符号连线 → 进入 Jackpot 轮盘
+  - 轮盘随机决定获得哪个层级的 Jackpot
+
+  方案B：随机触发
+  - 每次 Spin 有极小概率（如 1/10000）直接触发
+  - 触发后进入 Jackpot 游戏
+
+  3. 累积机制
+
+  每笔下注的 1% 进入 Jackpot 池
+  ├── 30% → Mini 池
+  ├── 25% → Minor 池
+  ├── 25% → Major 池
+  └── 20% → Grand 池
+
+  4. 数据库设计
+
+  -- Jackpot 配置表
+  CREATE TABLE jackpot_config (
+      game_id VARCHAR(32) PRIMARY KEY,
+      enabled TINYINT(1) DEFAULT 1,
+      contribution_rate DECIMAL(5,4) DEFAULT 0.0100, -- 1%
+      mini_seed DECIMAL(18,2) DEFAULT 100,
+      minor_seed DECIMAL(18,2) DEFAULT 500,
+      major_seed DECIMAL(18,2) DEFAULT 2000,
+      grand_seed DECIMAL(18,2) DEFAULT 10000
+  );
+
+  -- Jackpot 实时池（Redis 为主，DB 备份）
+  CREATE TABLE jackpot_pool (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      game_id VARCHAR(32),
+      pool_type VARCHAR(16), -- mini/minor/major/grand
+      current_amount DECIMAL(18,2),
+      last_win_time DATETIME,
+      win_count BIGINT DEFAULT 0
+  );
+
+  -- Jackpot 中奖记录
+  CREATE TABLE jackpot_win_record (
+      transaction_id VARCHAR(64) PRIMARY KEY,
+      integrator_id VARCHAR(32),
+      user_id VARCHAR(32),
+      game_id VARCHAR(32),
+      pool_type VARCHAR(16),
+      win_amount DECIMAL(18,2),
+      session_id VARCHAR(64),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  5. Redis 结构
+
+  # 实时奖池金额
+  jackpot:{game_id}:{pool_type}:amount → DECIMAL
+
+  # 奖池状态信息
+  jackpot:{game_id}:info → HASH {
+      mini_amount: "1234.56",
+      minor_amount: "5678.90",
+      major_amount: "12345.67",
+      grand_amount: "67890.12",
+      last_update: "2026-06-01T21:00:00Z"
+  }

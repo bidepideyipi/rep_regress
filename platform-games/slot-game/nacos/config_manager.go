@@ -20,6 +20,7 @@ type ClickHouseConfig struct {
 	Port     int
 	Username string
 	Password string
+	Database string
 }
 
 // RedisConfig Redis配置
@@ -254,6 +255,7 @@ func (cm *ConfigManager) GetClickHouseConfig(dataID, group string) (*ClickHouseC
 		Port:     9000,
 		Username: "default",
 		Password: "",
+		Database: "rtp_analytics",
 	}
 
 	// 从JSON配置中提取ClickHouse配置
@@ -269,6 +271,9 @@ func (cm *ConfigManager) GetClickHouseConfig(dataID, group string) (*ClickHouseC
 		}
 		if password, ok := clickhouse["password"].(string); ok {
 			chConfig.Password = password
+		}
+		if database, ok := clickhouse["database"].(string); ok {
+			chConfig.Database = database
 		}
 	}
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/rtp-processor/config"
+	"github.com/rtp-processor/consumer"
 	"github.com/rtp-processor/processor"
 )
 
@@ -23,7 +24,7 @@ var (
 
 /**
  * @brief 主函数
- * @note 加载配置，连接 ClickHouse，启动批处理服务，等待信号量，优雅停机
+ * @note 加载配置，连接 ClickHouse，启动批处理服务和消费者，等待信号量，优雅停机
  */
 func main() {
 	flag.Parse()
@@ -66,18 +67,42 @@ func main() {
 
 	svc.Start()
 
-	gracefullShutdown(svc)
+	// 启动 RocketMQ 消费者
+	gameConsumer, err := consumer.NewGameConsumer(cfg)
+	if err != nil {
+		log.Printf("创建消费者失败: %v", err)
+	} else {
+		if err := gameConsumer.Start(); err != nil {
+			log.Printf("启动消费者失败: %v", err)
+		} else {
+			log.Printf("RocketMQ 消费者启动成功")
+		}
+	}
+
+	gracefullShutdown(svc, gameConsumer)
 }
 
 /**
  * @brief 优雅停机
  * @param svc 批处理服务
+ * @param gameConsumer 游戏消费者（可能为nil）
  */
-func gracefullShutdown(svc *processor.BatchService) {
+func gracefullShutdown(svc *processor.BatchService, gameConsumer *consumer.GameConsumer) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
+	log.Println("正在关闭服务...")
+
+	// 先停止消费者
+	if gameConsumer != nil {
+		log.Println("正在关闭消费者...")
+		if err := gameConsumer.Stop(); err != nil {
+			log.Printf("关闭消费者失败: %v", err)
+		}
+	}
+
+	// 再停止批处理服务
 	log.Println("正在关闭 RTP 批处理服务...")
 	svc.Stop()
 	log.Println("服务已关闭")

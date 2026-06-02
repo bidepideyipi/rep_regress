@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"log"
 	"net"
@@ -14,7 +13,6 @@ import (
 
 	"platform-games/slot-game/cache"
 	"platform-games/slot-game/config"
-	"platform-games/slot-game/consumer"
 	"platform-games/slot-game/controllers"
 	"platform-games/slot-game/models"
 	"platform-games/slot-game/mysql"
@@ -70,47 +68,7 @@ func main() {
 	gameController := controllers.NewGameController(configManager)
 	gameController.InitializeGame(gameConfig)
 
-	// 从Nacos加载应用配置（用于RocketMQ和ClickHouse）
-	nacosAppConfigContent, err := configManager.GetRawConfig(ClickHouseConfigDataID, ClickHouseConfigGroup)
-	if err != nil {
-		log.Printf("从Nacos加载应用配置失败: %v", err)
-	}
-
-	var appConfigForConsumer *consumer.AppConfig
-	if nacosAppConfigContent != "" {
-		var cfg consumer.AppConfig
-		if err := json.Unmarshal([]byte(nacosAppConfigContent), &cfg); err != nil {
-			log.Printf("解析Nacos应用配置失败: %v", err)
-		} else {
-			appConfigForConsumer = &cfg
-		}
-	}
-
-	if appConfigForConsumer == nil {
-		log.Printf("使用默认应用配置")
-		appConfigForConsumer = &consumer.AppConfig{
-			RocketMQ: consumer.RocketMQConfig{
-				NameServers: []string{"127.0.0.1:9876"},
-				Producer: consumer.ProducerConfig{
-					GroupName: "slot_game_producer_group",
-					Topic:     "game_log_topic",
-				},
-				Consumer: consumer.ConsumerConfig{
-					GroupName: "slot_game_consumer_group",
-					Topic:     "game_log_topic",
-					BatchSize: 100,
-				},
-			},
-			ClickHouse: consumer.ClickHouseConfig{
-				Host:     "127.0.0.1",
-				Port:     9000,
-				Username: "default",
-				Password: "",
-				Database: "rtp_analytics",
-			},
-		}
-	}
-		// 初始化Redis缓存
+	// 初始化Redis缓存
 	var redisCache *cache.RedisCache
 	var userRTPService *rtp.UserRTPService
 	redisConfig, err := configManager.GetRedisConfig(ClickHouseConfigDataID, ClickHouseConfigGroup)
@@ -145,12 +103,24 @@ func main() {
 		log.Printf("Redis缓存初始化成功")
 
 		// 初始化UserRTP服务
+		clickhouseConfig, err := configManager.GetClickHouseConfig(ClickHouseConfigDataID, ClickHouseConfigGroup)
+		if err != nil {
+			log.Printf("从Nacos加载ClickHouse配置失败，使用默认配置: %v", err)
+			clickhouseConfig = &nacos.ClickHouseConfig{
+				Host:     "127.0.0.1",
+				Port:     9000,
+				Username: "default",
+				Password: "",
+				Database: "rtp_analytics",
+			}
+		}
+
 		userRTPService, err = rtp.NewUserRTPService(
-			appConfigForConsumer.ClickHouse.Host,
-			appConfigForConsumer.ClickHouse.Port,
-			appConfigForConsumer.ClickHouse.Username,
-			appConfigForConsumer.ClickHouse.Password,
-			appConfigForConsumer.ClickHouse.Database,
+			clickhouseConfig.Host,
+			clickhouseConfig.Port,
+			clickhouseConfig.Username,
+			clickhouseConfig.Password,
+			clickhouseConfig.Database,
 			redisCache,
 			10*time.Second, // 缓存过期时间10秒
 		)
@@ -207,23 +177,6 @@ func main() {
 	log.Printf("===== MySQL数据库初始化成功 =====")
 	gameController.SetDB(db.DB)
 	log.Printf("===== MySQL已设置到GameController =====")
-	// 初始化游戏消费者
-	gameConsumer, err := consumer.NewGameConsumer(appConfigForConsumer)
-	if err != nil {
-		log.Printf("初始化游戏消费者失败: %v", err)
-	} else {
-		if err := gameConsumer.Start(); err != nil {
-			log.Printf("启动游戏消费者失败: %v", err)
-		}
-		defer func() {
-			if gameConsumer != nil {
-				log.Println("正在关闭游戏消费者...")
-				if err := gameConsumer.Stop(); err != nil {
-					log.Printf("关闭游戏消费者失败: %v", err)
-				}
-			}
-		}()
-	}
 
 	// 初始化RocketMQ生产者
 	mqProducer, err := rocketmq.NewProducer()

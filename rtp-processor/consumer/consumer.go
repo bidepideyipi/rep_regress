@@ -9,16 +9,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"platform-games/slot-game/models"
-
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/consumer"
 	"github.com/apache/rocketmq-client-go/v2/primitive"
+	"github.com/rtp-processor/config"
+	"github.com/rtp-processor/models"
 )
 
 // NewGameConsumer 创建游戏消费者
-func NewGameConsumer(appConfig *AppConfig) (*GameConsumer, error) {
+func NewGameConsumer(appConfig *config.Config) (*GameConsumer, error) {
 	gc := &GameConsumer{
 		appConfig: appConfig,
 	}
@@ -40,7 +40,7 @@ func NewGameConsumer(appConfig *AppConfig) (*GameConsumer, error) {
 }
 
 // NewClickHouseWriter 创建ClickHouseWriter
-func NewClickHouseWriter(appConfig *AppConfig) (*ClickHouseWriter, error) {
+func NewClickHouseWriter(appConfig *config.Config) (*ClickHouseWriter, error) {
 	chConfig := appConfig.ClickHouse
 	if chConfig.Host == "" || chConfig.Port == 0 || chConfig.Username == "" || chConfig.Database == "" {
 		log.Printf("[Consumer] ClickHouseHouse配置不完整，无法初始化ClickHouseWriter")
@@ -94,11 +94,9 @@ func (w *ClickHouseWriter) AddToBuffer(entry models.GameLogDetail) error {
 	defer w.mutex.Unlock()
 
 	w.buffer = append(w.buffer, entry)
-	//log.Printf("[Consumer] 缓冲区大小: %d/%d", len(w.buffer), w.batchSize)
 
 	// 达到批量大小时立即同步刷新
 	if len(w.buffer) >= w.batchSize {
-		log.Printf("[Consumer] 达到批量大小，开始同步刷新")
 		return w.flushLocked()
 	}
 
@@ -224,7 +222,7 @@ func (gc *GameConsumer) initRocketMQConsumer() error {
 	nameServers := gc.parseRocketMQNameServers()
 	groupName, topic := gc.getConsumerGroupAndTopic()
 
-	log.Printf("[Consumer] RocketMQ配置: nameServers=%s, groupName=%s, topic=%s",
+	log.Printf("[Consumer] RocketMQ Pull模式配置: nameServers=%s, groupName=%s, topic=%s",
 		nameServers, groupName, topic)
 
 	namesrv, err := primitive.NewNamesrvAddr(nameServers)
@@ -232,49 +230,85 @@ func (gc *GameConsumer) initRocketMQConsumer() error {
 		return fmt.Errorf("创建Namesrv失败: %v", err)
 	}
 
-	rocketConsumer, err := rocketmq.NewPushConsumer(
+	rocketConsumer, err := rocketmq.NewPullConsumer(
 		consumer.WithGroupName(groupName),
 		consumer.WithNameServer(namesrv),
-		consumer.WithPullBatchSize(64),
-		consumer.WithPullInterval(5*time.Second),
 	)
 	if err != nil {
-		return fmt.Errorf("创建消费者失败: %v", err)
+		return fmt.Errorf("创建PullConsumer失败: %v", err)
 	}
 
 	// 订阅主题
-	err = rocketConsumer.Subscribe(topic, consumer.MessageSelector{}, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
-		log.Printf("[Consumer] 收到 %d 条消息", len(msgs))
-
-		for _, msg := range msgs {
-			var logEntry models.GameLogDetail
-			if err := json.Unmarshal(msg.Body, &logEntry); err != nil {
-				log.Printf("[Consumer] JSON解析失败: %v, body=%s", err, string(msg.Body))
-				continue
-			}
-
-			log.Printf("[Consumer] 解析成功, log_id=%s, game_id=%s", logEntry.LogID, logEntry.GameID)
-
-			if err := gc.chWriter.AddToBuffer(logEntry); err != nil {
-				log.Printf("[Consumer] 写入失败: %v, msg_id=%s, log_id=%s", err, msg.MsgId, logEntry.LogID)
-				return consumer.ConsumeRetryLater, err
-			}
-		}
-
-		// 批量处理完成后刷新到 ClickHouse，成功后再 ack
-		if err := gc.chWriter.Flush(); err != nil {
-			log.Printf("[Consumer] 刷新 ClickHouse 失败: %v", err)
-			return consumer.ConsumeRetryLater, err
-		}
-
-		return consumer.ConsumeSuccess, nil
-	})
-	if err != nil {
+	if err := rocketConsumer.Subscribe(topic, consumer.MessageSelector{}); err != nil {
+		rocketConsumer.Shutdown()
 		return fmt.Errorf("订阅主题失败: %v", err)
 	}
 
 	gc.rocketConsumer = rocketConsumer
+	gc.stopChan = make(chan struct{})
+	gc.offsets = make(map[int64]int64)
 	return nil
+}
+
+/**
+ * @brief 拉取并处理消息
+ * @param ctx 上下文
+ */
+func (gc *GameConsumer) pullAndProcess(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-gc.stopChan:
+			return
+		default:
+		}
+
+		// Pull 方法批量拉取消息，每次最多 100 条
+		pullResult, err := gc.rocketConsumer.Pull(ctx, 100)
+		if err != nil {
+			log.Printf("[Consumer] Pull 失败: %v", err)
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		msgs := pullResult.GetMessageExts()
+		if len(msgs) > 0 {
+			log.Printf("[Consumer] 拉取到 %d 条消息 (MinOffset: %d, MaxOffset: %d, NextBegin: %d)",
+				len(msgs), pullResult.MinOffset, pullResult.MaxOffset, pullResult.NextBeginOffset)
+
+			// 先添加到缓冲区
+			for _, msg := range msgs {
+				var logEntry models.GameLogDetail
+				if err := json.Unmarshal(msg.Body, &logEntry); err != nil {
+					log.Printf("[Consumer] JSON解析失败: %v", err)
+					continue
+				}
+
+				if err := gc.chWriter.AddToBuffer(logEntry); err != nil {
+					log.Printf("[Consumer] 写入失败: %v", err)
+				}
+			}
+
+			// 刷新到 ClickHouse，只有写入成功才算消费成功
+			if err := gc.chWriter.Flush(); err != nil {
+				log.Printf("[Consumer] 刷新 ClickHouse 失败，停止消费: %v", err)
+				// 写入失败，停止消费，避免数据丢失
+				// 注意：offset 未持久化，重启后会重新消费这批消息
+				time.Sleep(time.Second)
+				continue
+			}
+
+			// 写入成功后立即持久化 offset，确保数据不丢失
+			_, topic := gc.getConsumerGroupAndTopic()
+			if err := gc.rocketConsumer.PersistOffset(ctx, topic); err != nil {
+				log.Printf("[Consumer] 持久化 offset 失败: %v", err)
+			}
+
+			// 处理限流延迟
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
 
 // Start 启动消费者
@@ -283,13 +317,23 @@ func (gc *GameConsumer) Start() error {
 		return fmt.Errorf("启动消费者失败: %v", err)
 	}
 
-	log.Printf("[Consumer] 消费者启动成功")
+	log.Printf("[Consumer] PullConsumer 启动成功，开始拉取消息")
+
+	// 启动拉取循环
+	ctx := context.Background()
+	go gc.pullAndProcess(ctx)
+
 	return nil
 }
 
 // Stop 停止消费者
 func (gc *GameConsumer) Stop() error {
 	log.Printf("[Consumer] 正在关闭")
+
+	// 停止拉取循环
+	if gc.stopChan != nil {
+		close(gc.stopChan)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
