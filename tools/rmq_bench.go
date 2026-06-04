@@ -16,34 +16,34 @@ import (
 )
 
 type GameLogDetail struct {
-	LogID           string       `json:"log_id"`
-	GameSessionID   string       `json:"game_session_id"`
-	IntegratorID    string       `json:"integrator_id"`
-	UserID          string       `json:"user_id"`
-	GameID          string       `json:"game_id"`
-	BetAmount       decimal.Decimal `json:"bet_amount"`
-	WinAmount       decimal.Decimal `json:"win_amount"`
-	NetResult       decimal.Decimal `json:"net_result"`
-	BetLines        uint16       `json:"bet_lines"`
-	BetPerLine      decimal.Decimal `json:"bet_per_line"`
-	IsFreeSpin      uint8        `json:"is_free_spin"`
-	BonusFeature    string       `json:"bonus_feature"`
-	DeviceType      string       `json:"device_type"`
-	DeviceOS        string       `json:"device_os"`
-	BrowserType     string       `json:"browser_type"`
-	IPAddress       uint32       `json:"ip_address"`
-	IPRegion        string       `json:"ip_region"`
-	IPCountry       string       `json:"ip_country"`
-	SessionID       string       `json:"session_id"`
-	ServerID        string       `json:"server_id"`
-	ProcessingTime  uint32       `json:"processing_time_ms"`
-	ErrorCode       uint16       `json:"error_code"`
-	ErrorMessage    string       `json:"error_message"`
-	GameResultJSON  string       `json:"game_result_json"`
-	ReelResult      [][]string   `json:"reel_result"`
-	WinLines        [][]interface{} `json:"win_lines"`
-	UserAgent       string       `json:"user_agent"`
-	LogTime         time.Time    `json:"log_time"`
+	LogID          string          `json:"log_id"`
+	GameSessionID  string          `json:"game_session_id"`
+	IntegratorID   string          `json:"integrator_id"`
+	UserID         string          `json:"user_id"`
+	GameID         string          `json:"game_id"`
+	BetAmount      decimal.Decimal `json:"bet_amount"`
+	WinAmount      decimal.Decimal `json:"win_amount"`
+	NetResult      decimal.Decimal `json:"net_result"`
+	BetLines       uint16          `json:"bet_lines"`
+	BetPerLine     decimal.Decimal `json:"bet_per_line"`
+	IsFreeSpin     uint8           `json:"is_free_spin"`
+	BonusFeature   string          `json:"bonus_feature"`
+	DeviceType     string          `json:"device_type"`
+	DeviceOS       string          `json:"device_os"`
+	BrowserType    string          `json:"browser_type"`
+	IPAddress      uint32          `json:"ip_address"`
+	IPRegion       string          `json:"ip_region"`
+	IPCountry      string          `json:"ip_country"`
+	SessionID      string          `json:"session_id"`
+	ServerID       string          `json:"server_id"`
+	ProcessingTime uint32          `json:"processing_time_ms"`
+	ErrorCode      uint16          `json:"error_code"`
+	ErrorMessage   string          `json:"error_message"`
+	GameResultJSON string          `json:"game_result_json"`
+	ReelResult     [][]string      `json:"reel_result"`
+	WinLines       [][]interface{} `json:"win_lines"`
+	UserAgent      string          `json:"user_agent"`
+	LogTime        time.Time       `json:"log_time"`
 }
 
 var (
@@ -150,34 +150,36 @@ func generateMessage(id int64) GameLogDetail {
 	bet := decimal.NewFromFloat(betVal)
 	win := decimal.NewFromFloat(float64((id * 3) % 20))
 
+	log.Printf("bet = %s, win= %s\n", bet.String(), win.String())
+
 	return GameLogDetail{
-		LogID:         fmt.Sprintf("log_%d_user_%d", id, id%100),
-		GameSessionID: fmt.Sprintf("session_%d", id/100),
-		IntegratorID:  "integrator_001",
-		UserID:        fmt.Sprintf("user_%d", id%1000),
-		GameID:        "game_001",
-		BetAmount:     bet,
-		WinAmount:     win,
-		NetResult:     bet.Sub(win),
-		BetLines:      20,
-		BetPerLine:    decimal.NewFromFloat(0.1),
-		IsFreeSpin:    uint8(id % 5),
-		BonusFeature:  "",
-		DeviceType:    "mobile",
-		DeviceOS:      "ios",
-		BrowserType:   "safari",
-		IPAddress:     3232235521 + uint32(id%1000), // 192.168.1.1 + offset
-		IPRegion:      "guangdong",
-		IPCountry:     "CN",
-		SessionID:     fmt.Sprintf("sess_%d", id%500),
-		ServerID:     "server_001",
+		LogID:          fmt.Sprintf("log_%d_user_%d", id, id%100),
+		GameSessionID:  fmt.Sprintf("session_%d", id/100),
+		IntegratorID:   "integrator_001",
+		UserID:         fmt.Sprintf("user_%d", id%1000),
+		GameID:         "game_001",
+		BetAmount:      bet,
+		WinAmount:      win,
+		NetResult:      bet.Sub(win),
+		BetLines:       5,
+		BetPerLine:     decimal.NewFromFloat(0.1),
+		IsFreeSpin:     uint8(id % 5),
+		BonusFeature:   "",
+		DeviceType:     "mobile",
+		DeviceOS:       "ios",
+		BrowserType:    "safari",
+		IPAddress:      3232235521 + uint32(id%1000), // 192.168.1.1 + offset
+		IPRegion:       "guangdong",
+		IPCountry:      "CN",
+		SessionID:      fmt.Sprintf("sess_%d", id%500),
+		ServerID:       "server_001",
 		ProcessingTime: uint32(50 + (id % 200)),
-		ErrorCode:     0,
-		ErrorMessage:  "",
+		ErrorCode:      0,
+		ErrorMessage:   "",
 		GameResultJSON: fmt.Sprintf(`{"spin_id":%d}`, id),
-		ReelResult:    [][]string{{"cherry", "lemon", "orange"}, {"cherry", "lemon", "orange"}, {"cherry", "lemon", "orange"}},
-		WinLines:      [][]interface{}{},
-		UserAgent:     "Mozilla/5.0",
-		LogTime:       now,
+		ReelResult:     [][]string{{"cherry", "lemon", "orange"}, {"cherry", "lemon", "orange"}, {"cherry", "lemon", "orange"}},
+		WinLines:       [][]interface{}{},
+		UserAgent:      "Mozilla/5.0",
+		LogTime:        now,
 	}
 }

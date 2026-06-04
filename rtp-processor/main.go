@@ -13,6 +13,7 @@ import (
 	"github.com/rtp-processor/config"
 	"github.com/rtp-processor/consumer"
 	"github.com/rtp-processor/processor"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -27,8 +28,9 @@ var (
  * @note 加载配置，连接 ClickHouse，启动批处理服务和消费者，等待信号量，优雅停机
  */
 func main() {
-	flag.Parse()
+	logrus.SetLevel(logrus.WarnLevel)
 
+	flag.Parse()
 	// 加载配置
 	cfg, err := loadConfig()
 	if err != nil {

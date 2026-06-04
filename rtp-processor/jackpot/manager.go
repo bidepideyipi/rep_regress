@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/shopspring/decimal"
 	"github.com/rtp-processor/db"
+	"github.com/shopspring/decimal"
 )
 
 // Manager Jackpot管理器
@@ -23,6 +23,7 @@ type Manager struct {
 	updateMutex      sync.Mutex
 	flushInterval    time.Duration
 	lastFlush        time.Time
+	flushChan        chan struct{}
 }
 
 // Config Jackpot配置
@@ -48,6 +49,7 @@ func NewManager(mysqlMgr *db.MySQLManager) (*Manager, error) {
 		updateBuffer:  make(map[string]map[string]float64),
 		flushInterval: 5 * time.Second,
 		cacheExpiry:   time.Time{},
+		flushChan:     make(chan struct{}, 1),
 	}
 
 	// 预加载配置
@@ -66,14 +68,15 @@ type BetLog interface {
 }
 
 // CalculateJackpot 计算Jackpot金额并加入更新队列
-func (jm *Manager) CalculateJackpot(log BetLog) {
-	betAmount := log.GetBetAmount()
+func (jm *Manager) CalculateJackpot(betLog BetLog) {
+	betAmount := betLog.GetBetAmount()
 	if betAmount.LessThanOrEqual(decimal.Zero) {
+		log.Printf("[Jackpot] 跳过: 投注金额<=0, gameID=%s, amount=%s", betLog.GetGameID(), betAmount.String())
 		return
 	}
 
 	// 获取游戏配置
-	cfg := jm.getConfig(log.GetGameID())
+	cfg := jm.getConfig(betLog.GetGameID())
 
 	var gameID string
 	var miniRatio, minorRatio, majorRatio, grandRatio float64
@@ -85,6 +88,7 @@ func (jm *Manager) CalculateJackpot(log BetLog) {
 		majorRatio = cfg.Contribution * cfg.MajorRatio
 		grandRatio = cfg.Contribution * cfg.GrandRatio
 	} else {
+		log.Printf("[Jackpot] 游戏无专属配置, gameID=%s, 使用全局配置", betLog.GetGameID())
 		gameID = "0"
 		miniRatio = 0
 		minorRatio = 0
@@ -103,17 +107,26 @@ func (jm *Manager) CalculateJackpot(log BetLog) {
 
 	betAmountFloat, _ := betAmount.Float64()
 
+	updateCount := 0
 	if miniRatio > 0 {
 		jm.AddUpdate(gameID, "mini", betAmountFloat*miniRatio)
+		updateCount++
 	}
 	if minorRatio > 0 {
 		jm.AddUpdate(gameID, "minor", betAmountFloat*minorRatio)
+		updateCount++
 	}
 	if majorRatio > 0 {
 		jm.AddUpdate(gameID, "major", betAmountFloat*majorRatio)
+		updateCount++
 	}
 	if grandRatio > 0 {
-		jm.AddUpdate("0", "grand", betAmountFloat*grandRatio)
+		jm.AddUpdate(gameID, "grand", betAmountFloat*grandRatio)
+		updateCount++
+	}
+
+	if updateCount == 0 {
+		log.Printf("[Jackpot] 跳过: 所有ratio=0, gameID=%s", betLog.GetGameID())
 	}
 }
 
@@ -205,13 +218,28 @@ func (jm *Manager) AddUpdate(gameID, poolType string, amount float64) {
 	}
 	jm.updateBuffer[gameID][poolType] += amount
 
-	if time.Since(jm.lastFlush) > jm.flushInterval {
+	// 触发异步刷新（非阻塞，防止重复触发）
+	select {
+	case jm.flushChan <- struct{}{}:
 		go jm.Flush()
+	default:
+		// 已经有 flush 在等待或运行
 	}
 }
 
 // Flush 刷新Jackpot池更新
 func (jm *Manager) Flush() error {
+	// 从 channel 确认触发
+	select {
+	case <-jm.flushChan:
+	default:
+	}
+
+	// 检查是否需要刷新
+	if time.Since(jm.lastFlush) < jm.flushInterval {
+		return nil
+	}
+
 	jm.updateMutex.Lock()
 	if len(jm.updateBuffer) == 0 {
 		jm.updateMutex.Unlock()
@@ -235,13 +263,14 @@ func (jm *Manager) Flush() error {
 // batchUpdatePools 批量更新Jackpot池
 func (jm *Manager) batchUpdatePools(updates map[string]map[string]float64) error {
 	if len(updates) == 0 {
+		log.Printf("[Jackpot] 无更新数据")
 		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	log.Printf("[Jackpot] 批量更新 %d 个游戏的池子", len(updates))
+	// log.Printf("[Jackpot] 批量更新 %d 个游戏的池子", len(updates))
 
 	updateQuery := `
 		INSERT INTO jackpot_pool (game_id, pool_type, current_amount, win_count)

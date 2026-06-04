@@ -15,13 +15,13 @@ import (
 
 // ClickHouseWriter ClickHouse写入器
 type ClickHouseWriter struct {
-	conn        clickhouse.Conn
-	mutex       sync.Mutex
-	buffer      []models.GameLogDetail
-	batchSize   int
-	tableName   string
-	flushCount  int64
-	errorCount  int64
+	conn       clickhouse.Conn
+	mutex      sync.Mutex
+	buffer     []models.GameLogDetail
+	batchSize  int
+	tableName  string
+	flushCount int64
+	errorCount int64
 }
 
 // NewClickHouseWriter 创建ClickHouse写入器
@@ -71,6 +71,13 @@ func NewClickHouseWriter(cfg *config.Config) (*ClickHouseWriter, error) {
 }
 
 // AddToBuffer 添加日志到缓冲区
+// 这是入口公共方法，用于添加日志到缓冲区，准备批量写入clickhouse。
+// 如果缓冲区大小超过 batchSize，会自动刷新缓冲区。
+// 参数:
+//   - entry: models.GameLogDetail 日志条目
+//
+// 返回:
+//   - error: 操作过程中的错误
 func (w *ClickHouseWriter) AddToBuffer(entry models.GameLogDetail) error {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
@@ -134,7 +141,6 @@ func (w *ClickHouseWriter) flushLocked() error {
 
 	w.buffer = w.buffer[:0]
 	atomic.AddInt64(&w.flushCount, 1)
-	log.Printf("[ClickHouse] 批量写入成功，总成功次数: %d", atomic.LoadInt64(&w.flushCount))
 
 	return nil
 }
