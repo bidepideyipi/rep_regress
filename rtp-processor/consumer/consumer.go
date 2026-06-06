@@ -187,14 +187,13 @@ func (gc *GameConsumer) initRocketMQConsumer() error {
 // 该方法在一个独立的 goroutine 中运行，持续执行以下流程：
 // 1. 从 RocketMQ 拉取消息（批量）
 // 2. 解析消息体为 GameLogDetail 结构
-// 3. 将数据写入 ClickHouse 缓冲区
+// 3. 将数据批量写入 ClickHouse
 // 4. 计算 Jackpot 累计奖池
-// 5. 刷新 ClickHouse 缓冲区（确保数据写入）
-// 6. 持久化消费偏移量
+// 5. 持久化消费偏移量
 //
 // 错误处理:
-// - 拉取失败：等待 500ms 后重试
-// - 刷新失败：等待 1s 后重试（不处理该批次消息）
+// - 拉取失败：等待 100ms 后重试
+// - 写入失败：等待 1s 后重试（不处理该批次消息）
 // - JSON 解析失败：跳过该消息，继续处理下一条
 //
 // 参数:
@@ -235,18 +234,15 @@ func (gc *GameConsumer) pullAndProcess(ctx context.Context) {
 		if len(msgs) > 0 {
 			log.Printf("[Consumer] 拉取到 %d 条消息", len(msgs))
 
-			// 处理每条消息
+			// 解析并收集所有消息
+			entries := make([]models.GameLogDetail, 0, len(msgs))
 			for _, msg := range msgs {
 				var logEntry models.GameLogDetail
 				if err := json.Unmarshal(msg.Body, &logEntry); err != nil {
 					log.Printf("[Consumer] JSON解析失败: %v", err)
 					continue
 				}
-
-				// 写入 ClickHouse 缓冲区
-				if err := gc.chWriter.AddToBuffer(logEntry); err != nil {
-					log.Printf("[Consumer] 写入失败: %v", err)
-				}
+				entries = append(entries, logEntry)
 
 				// 计算 Jackpot 累计奖池
 				// if gc.jackpotManager != nil {
@@ -254,11 +250,13 @@ func (gc *GameConsumer) pullAndProcess(ctx context.Context) {
 				// }
 			}
 
-			// 刷新 ClickHouse 缓冲区，确保数据写入
-			if err := gc.chWriter.Flush(); err != nil {
-				log.Printf("[Consumer] 刷新失败: %v", err)
-				time.Sleep(time.Second)
-				continue
+			// 批量写入 ClickHouse
+			if len(entries) > 0 {
+				if err := gc.chWriter.BatchWrite(entries); err != nil {
+					log.Printf("[Consumer] 批量写入失败: %v", err)
+					time.Sleep(time.Second)
+					continue
+				}
 			}
 
 			// 持久化消费偏移量，确保消息不丢失
@@ -303,7 +301,7 @@ func (gc *GameConsumer) Start() error {
 // 2. 关闭 RocketMQ 消费者
 // 3. 关闭 Jackpot Manager
 // 4. 关闭 MySQL Manager
-// 5. 刷新并关闭 ClickHouse Writer
+// 5. 关闭 ClickHouse Writer
 // 6. 输出关闭统计信息
 //
 // 该方法会阻塞最多 30 秒，等待所有资源关闭完成。
@@ -345,10 +343,10 @@ func (gc *GameConsumer) Stop() error {
 		// 关闭 ClickHouse Writer
 		if gc.chWriter != nil {
 			// 获取并输出统计信息
-			flushCount, errorCount, bufferSize := gc.chWriter.GetStats()
+			flushCount, errorCount := gc.chWriter.GetStats()
 			log.Printf("[Consumer] ======== 关闭统计 ========")
-			log.Printf("[Consumer] 成功刷新: %d, 失败: %d, 缓冲: %d",
-				flushCount, errorCount, bufferSize)
+			log.Printf("[Consumer] 成功刷新: %d, 失败: %d",
+				flushCount, errorCount)
 			log.Printf("[Consumer] =========================")
 
 			gc.chWriter.Close()

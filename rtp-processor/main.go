@@ -1,17 +1,15 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/rtp-processor/config"
 	"github.com/rtp-processor/consumer"
+	"github.com/rtp-processor/db"
 	"github.com/rtp-processor/processor"
 	"github.com/sirupsen/logrus"
 )
@@ -37,59 +35,53 @@ func main() {
 		log.Fatalf("加载配置失败: %v", err)
 	}
 
-	// 连接 ClickHouse
-	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr: []string{cfg.ClickHouseAddr()},
-		Auth: clickhouse.Auth{
-			Database: cfg.ClickHouse.Database,
-			Username: cfg.ClickHouse.Username,
-			Password: cfg.ClickHouse.Password,
-		},
-		DialTimeout: 10 * time.Second,
-	})
+	// 调试：输出 ClickHouse 配置
+	passwordSet := "已设置"
+	if cfg.ClickHouse.Password == "" {
+		passwordSet = "未设置"
+	}
+	log.Printf("ClickHouse 配置: Host=%s, Port=%d, Database=%s, Username=%s, Password=%s",
+		cfg.ClickHouse.Host, cfg.ClickHouse.Port, cfg.ClickHouse.Database, cfg.ClickHouse.Username, passwordSet)
 
-	// 失败时退出
+	// 连接 ClickHouse
+	chWriter, err := db.NewClickHouseWriter(cfg)
 	if err != nil {
 		log.Fatalf("连接 ClickHouse 失败: %v", err)
 	}
-	defer conn.Close()
+	defer chWriter.Close()
 
-	// 测试连接
-	if err := conn.Ping(context.Background()); err != nil {
-		log.Fatalf("Ping ClickHouse 失败: %v", err)
-	}
-
-	log.Printf("ClickHouse 连接成功: %s", cfg.ClickHouseAddr())
+	dbConn := chWriter.GetConn()
+	log.Printf("ClickHouse 连接成功")
 
 	// 启动批处理服务
-	svc := processor.NewBatchService(conn, cfg)
+	svc := processor.NewBatchService(dbConn, cfg)
 
 	log.Printf("RTP 批处理服务启动")
 	log.Printf("用户聚合间隔: %v, 游戏聚合间隔: %v, 告警间隔: %v", cfg.GetAggregateUserInterval(), cfg.GetAggregateGameInterval(), cfg.GetAlertInterval())
 
 	svc.Start()
 
-	// 启动 RocketMQ 消费者
-	gameConsumer, err := consumer.NewGameConsumer(cfg)
+	// 启动 RocketMQ Push 消费者
+	pushConsumer, err := consumer.NewPushConsumer(cfg)
 	if err != nil {
-		log.Printf("创建消费者失败: %v", err)
+		log.Printf("创建Push消费者失败: %v", err)
 	} else {
-		if err := gameConsumer.Start(); err != nil {
-			log.Printf("启动消费者失败: %v", err)
+		if err := pushConsumer.Start(); err != nil {
+			log.Printf("启动Push消费者失败: %v", err)
 		} else {
-			log.Printf("RocketMQ 消费者启动成功")
+			log.Printf("RocketMQ Push消费者启动成功")
 		}
 	}
 
-	gracefullShutdown(svc, gameConsumer)
+	gracefullShutdown(svc, pushConsumer)
 }
 
 /**
  * @brief 优雅停机
  * @param svc 批处理服务
- * @param gameConsumer 游戏消费者（可能为nil）
+ * @param pushConsumer Push消费者（可能为nil）
  */
-func gracefullShutdown(svc *processor.BatchService, gameConsumer *consumer.GameConsumer) {
+func gracefullShutdown(svc *processor.BatchService, pushConsumer *consumer.PushConsumer) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
@@ -97,9 +89,9 @@ func gracefullShutdown(svc *processor.BatchService, gameConsumer *consumer.GameC
 	log.Println("正在关闭服务...")
 
 	// 先停止消费者
-	if gameConsumer != nil {
+	if pushConsumer != nil {
 		log.Println("正在关闭消费者...")
-		if err := gameConsumer.Stop(); err != nil {
+		if err := pushConsumer.Stop(); err != nil {
 			log.Printf("关闭消费者失败: %v", err)
 		}
 	}

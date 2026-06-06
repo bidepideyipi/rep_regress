@@ -488,9 +488,10 @@ PARTITION BY toYYYYMM(time_window)
 ORDER BY (integrator_id, user_id, game_id, time_window)
 SETTINGS index_granularity = 8192;
 
-CREATE TABLE IF NOT EXISTS rtp_user_metrics
-AS rtp_user_metrics_local
-ENGINE = Distributed('default', 'rtp_analytics', 'rtp_user_metrics_local', rand());
+-- 单节点部署不需要 Distributed 表
+-- CREATE TABLE IF NOT EXISTS rtp_user_metrics
+-- AS rtp_user_metrics_local
+-- ENGINE = Distributed('default', 'rtp_analytics', 'rtp_user_metrics_local', rand());
 
 -- ============================================
 -- 用户 RTP 实时聚合表（5分钟粒度）
@@ -519,9 +520,10 @@ PARTITION BY toYYYYMMDD(time_window)
 ORDER BY (integrator_id, user_id, game_id, time_window)
 SETTINGS index_granularity = 8192;
 
-CREATE TABLE IF NOT EXISTS rtp_user_realtime
-AS rtp_user_realtime_local
-ENGINE = Distributed('default', 'rtp_analytics', 'rtp_user_realtime_local', rand());
+-- 单节点部署不需要 Distributed 表
+-- CREATE TABLE IF NOT EXISTS rtp_user_realtime
+-- AS rtp_user_realtime_local
+-- ENGINE = Distributed('default', 'rtp_analytics', 'rtp_user_realtime_local', rand());
 
 -- ============================================
 -- 游戏 RTP 实时聚合表（本地表）
@@ -555,9 +557,10 @@ PARTITION BY toYYYYMM(time_window)
 ORDER BY (integrator_id, game_id, time_window)
 SETTINGS index_granularity = 8192;
 
-CREATE TABLE IF NOT EXISTS rtp_game_metrics
-AS rtp_game_metrics_local
-ENGINE = Distributed('default', 'rtp_analytics', 'rtp_game_metrics_local', rand());
+-- 单节点部署不需要 Distributed 表
+-- CREATE TABLE IF NOT EXISTS rtp_game_metrics
+-- AS rtp_game_metrics_local
+-- ENGINE = Distributed('default', 'rtp_analytics', 'rtp_game_metrics_local', rand());
 
 -- ============================================
 -- 游戏 RTP 实时聚合表（5分钟粒度）
@@ -583,9 +586,10 @@ PARTITION BY toYYYYMMDD(time_window)
 ORDER BY (integrator_id, game_id, time_window)
 SETTINGS index_granularity = 8192;
 
-CREATE TABLE IF NOT EXISTS rtp_game_realtime
-AS rtp_game_realtime_local
-ENGINE = Distributed('default', 'rtp_analytics', 'rtp_game_realtime_local', rand());
+-- 单节点部署不需要 Distributed 表
+-- CREATE TABLE IF NOT EXISTS rtp_game_realtime
+-- AS rtp_game_realtime_local
+-- ENGINE = Distributed('default', 'rtp_analytics', 'rtp_game_realtime_local', rand());
 
 -- ============================================
 -- RTP 异常告警表
@@ -618,9 +622,10 @@ PARTITION BY toYYYYMM(detected_time)
 ORDER BY (integrator_id, alert_type, detected_time)
 SETTINGS index_granularity = 8192;
 
-CREATE TABLE IF NOT EXISTS rtp_alerts
-AS rtp_alerts_local
-ENGINE = Distributed('default', 'rtp_analytics', 'rtp_alerts_local', rand());
+-- 单节点部署不需要 Distributed 表
+-- CREATE TABLE IF NOT EXISTS rtp_alerts
+-- AS rtp_alerts_local
+-- ENGINE = Distributed('default', 'rtp_analytics', 'rtp_alerts_local', rand());
 
 
 
