@@ -123,7 +123,7 @@ tail -f ~/logs/mqnamesrv.log
 cd $ROCKETMQ_HOME/bin
 sh mqbroker -n localhost:9876 &
 # 或使用 nohup 在后台运行
-nohup sh mqbroker -n localhost:9876 > ~/logs/mqbroker.log 2>&1 &
+nohup sh mqbroker -c ~/Env/rocketmq-all-4.9.8-bin-release/conf/broker.conf -n localhost:9876 > ~/logs/mqbroker.log 2>&1 &
 
 # 验证 Broker 启动
 tail -f ~/logs/mqbroker.log
@@ -143,21 +143,22 @@ sh tools.sh org.apache.rocketmq.example.quickstart.Consumer
 ### 阶段一：基础存储启动
 
 1. **启动 MySQL**
+   
    ```bash
    brew services start mysql
    # 或
    mysql.server start
-
+   
    # 验证
    mysql -u root -p -e "SELECT 1"
    ```
-
 2. **启动 Redis**
+   
    ```bash
    brew services start redis
    # 或
    redis-server /opt/homebrew/etc/redis.conf
-
+   
    # 验证
    redis-cli ping
    # 应返回 PONG
@@ -166,46 +167,47 @@ sh tools.sh org.apache.rocketmq.example.quickstart.Consumer
 ### 阶段二：中间件启动
 
 3. **启动 ClickHouse**
+   
    ```bash
    brew services start clickhouse
-
+   
    # 验证连接
    clickhouse-client --query "SELECT 1"
-
+   
    # 创建数据库
    clickhouse-client --query "CREATE DATABASE IF NOT EXISTS rtp"
-
+   
    # 查看版本
    clickhouse-client --query "SELECT version()"
    ```
-
 4. **启动 Nacos**（必须先于应用启动）
+   
    ```bash
    cd /opt/nacos/nacos-server/bin
    sh startup.sh -m standalone
-
+   
    # 验证 Nacos 启动
    curl http://localhost:8848/nacos/v1/console/health/readiness
-
+   
    # 访问控制台
    open http://localhost:8848/nacos
    ```
-
 5. **启动 RocketMQ NameServer**（必须先于 Broker）
+   
    ```bash
    cd /opt/rocketmq/rocketmq/bin
    nohup sh mqnamesrv > ~/logs/mqnamesrv.log 2>&1 &
-
+   
    # 验证启动
    tail -f ~/logs/mqnamesrv.log
    # 看到 "The Name Server boot success" 即启动成功
    ```
-
 6. **启动 RocketMQ Broker**（依赖 NameServer）
+   
    ```bash
    cd /opt/rocketmq/rocketmq/bin
    nohup sh mqbroker -n localhost:9876 > ~/logs/mqbroker.log 2>&1 &
-
+   
    # 验证启动
    tail -f ~/logs/mqbroker.log
    # 看到 "The broker boot success" 即启动成功
@@ -214,23 +216,24 @@ sh tools.sh org.apache.rocketmq.example.quickstart.Consumer
 ### 阶段三：应用服务启动
 
 7. **初始化数据库**
+   
    ```bash
    # 创建数据库
    mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS goadmin;"
-
+   
    # 导入初始化脚本（如果有）
    mysql -u root -p goadmin < script/init.sql
    ```
-
 8. **在 Nacos 中创建配置**
-
+   
    访问 http://localhost:8848/nacos，进入「配置管理」→「配置列表」，点击「+」创建配置：
-
+   
    **Data ID**: `app-config`
    **Group**: `DEFAULT_GROUP`
    **命名空间**: `public`
-
+   
    **配置内容**:
+   
    ```json
    {
      "clickhouse": {
@@ -264,35 +267,35 @@ sh tools.sh org.apache.rocketmq.example.quickstart.Consumer
      "alert_interval": "10m"
    }
    ```
-
 9. **初始化 ClickHouse 数据库**
+   
    ```bash
    clickhouse-client --query "CREATE DATABASE IF NOT EXISTS rtp"
    clickhouse-client --query "CREATE TABLE IF NOT EXISTS rtp.game_events (..."  # 根据 script 目录中的 DDL 脚本执行
    ```
-
 10. **启动 RTP Processor**
+    
     ```bash
     cd rtp-processor
     go mod download
     go run main.go --nacos_addr=127.0.0.1
     ```
-
 11. **启动 Platform Admin**
+    
     ```bash
     cd platform-admin
     go mod download
     go run main.go
     # 访问 http://localhost:8080/pladmin
     ```
-
 12. **启动游戏服务**
+    
     ```bash
     # Gateway
     cd platform-games/gateway
     go mod download
     go run main.go
-
+    
     # Slot Game
     cd platform-games/slot-game
     go mod download
@@ -335,6 +338,7 @@ brew services stop mysql
 **问题**: 内存不足导致 RocketMQ 启动失败
 
 **解决**: 修改 JVM 参数
+
 ```bash
 # 编辑 $ROCKETMQ_HOME/bin/runbroker.sh
 # 找到 JAVA_OPT，调整为：
@@ -350,6 +354,7 @@ JAVA_OPT="${JAVA_OPT} -Xms256m -Xmx256m -XX:MetaspaceSize=128m -XX:MaxMetaspaceS
 **问题**: 应用启动时无法连接到 Nacos
 
 **检查**:
+
 1. 确认 Nacos 已启动: `ps aux | grep nacos`
 2. 检查端口占用: `lsof -i:8848`
 3. 查看日志: `tail -f /opt/nacos/nacos-server/logs/start.out`
@@ -359,6 +364,7 @@ JAVA_OPT="${JAVA_OPT} -Xms256m -Xmx256m -XX:MetaspaceSize=128m -XX:MaxMetaspaceS
 **问题**: 连接 ClickHouse 时提示连接被拒绝
 
 **解决**:
+
 ```bash
 # 检查 ClickHouse 状态
 brew services list
@@ -375,6 +381,7 @@ cat /opt/homebrew/etc/clickhouse-server/config.xml
 **问题**: Broker 日志显示连接 NameServer 失败
 
 **解决**:
+
 1. 确认 NameServer 已启动
 2. 检查网络连接: `telnet localhost 9876`
 3. 确认 Broker 启动参数正确: `-n localhost:9876`
@@ -426,3 +433,4 @@ go build -ldflags="-s -w" -o platform-admin main.go
 ## License
 
 Copyright © 2024 RTP Platform Team
+

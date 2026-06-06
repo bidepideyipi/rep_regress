@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	github.com/apache/rocketmq-client-go/v2 v2.1.2
 	github.com/go-sql-driver/mysql v1.10.0
+	github.com/google/wire v0.7.0
 	github.com/nacos-group/nacos-sdk-go/v2 v2.2.7
 	github.com/shopspring/decimal v1.4.0
 	github.com/sirupsen/logrus v1.9.3

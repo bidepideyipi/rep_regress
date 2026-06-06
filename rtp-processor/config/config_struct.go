@@ -30,4 +30,10 @@ type Config struct {
 	AggregateUserInterval string `json:"aggregate_user_interval"`
 	AggregateGameInterval string `json:"aggregate_game_interval"`
 	AlertInterval         string `json:"alert_interval"`
+	// Dependencies 依赖配置
+	Dependencies struct {
+		ClickHouseRequired bool `json:"clickhouse_required"` // ClickHouse是否必需
+		MySQLRequired       bool `json:"mysql_required"`      // MySQL是否必需
+		JackpotRequired     bool `json:"jackpot_required"`    // Jackpot是否必需
+	} `json:"dependencies"`
 }

@@ -147,10 +147,12 @@ func generateMessage(id int64) GameLogDetail {
 	if betVal < 1 {
 		betVal = 1.0
 	}
-	bet := decimal.NewFromFloat(betVal)
-	win := decimal.NewFromFloat(float64((id * 3) % 20))
 
-	log.Printf("bet = %s, win= %s\n", bet.String(), win.String())
+	//模拟96%的RTP
+	bet := decimal.NewFromFloat(betVal * 100)
+	win := decimal.NewFromFloat(betVal * 96)
+
+	//log.Printf("bet = %s, win= %s\n", bet.String(), win.String())
 
 	return GameLogDetail{
 		LogID:          fmt.Sprintf("log_%d_user_%d", id, id%100),
