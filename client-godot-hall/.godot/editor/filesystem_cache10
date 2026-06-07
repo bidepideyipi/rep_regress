@@ -1,0 +1,17 @@
+63f7b34db8d8cdea90c76aacccf841ec
+::res://::1780799198
+icon.svg::CompressedTexture2D::4058870806204446308::1780799198::1780799224::1::::<><><>0<>0<>b6e5144540d1d5f320e9ac2e3c1ab366<>res://.godot/imported/icon.svg-218a8f2b3041327d8a5756f3a245f83b.ctex::
+README.md::TextFile::-1::1780759526::0::1::::<><><>0<>0<><>::
+::res://scenes/::1780759520
+main_lobby.tscn::PackedScene::-1::1780759519::0::1::::<><><>0<>0<><>::res://scripts/main_lobby.gd
+::res://scenes/sub_games/::1780759520
+demo_game_1.tscn::PackedScene::-1::1780759520::0::1::::<><><>0<>0<><>::res://scripts/sub_games/demo_game_1.gd
+demo_game_2.tscn::PackedScene::-1::1780759520::0::1::::<><><>0<>0<><>::res://scripts/sub_games/demo_game_2.gd
+::res://scripts/::1780799177
+game_loader.gd::GDScript::2655994256049407737::1780759519::0::1::::<>Node<><>0<>0<><>::
+game_manager.gd::GDScript::258217640738751177::1780759519::0::1::::<>Node<><>0<>0<><>::
+main_lobby.gd::GDScript::4922239719446398740::1780799177::0::1::::<>Control<><>0<>0<><>::
+sub_game_registry.gd::GDScript::1568906162904179284::1780799057::0::1::::<>Node<><>0<>0<><>::
+::res://scripts/sub_games/::1780798914
+demo_game_1.gd::GDScript::8582219969522921954::1780759520::0::1::::<>Control<><>0<>0<><>::
+demo_game_2.gd::GDScript::3608058425614787034::1780759520::0::1::::<>Control<><>0<>0<><>::

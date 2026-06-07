@@ -1,0 +1,17 @@
+# Godot-specific
+.import/
+.export/
+
+# Build files
+build/
+
+# Editor files
+*.tscn.backup
+*.remap
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Project-specific
+.env
